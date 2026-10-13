@@ -12,12 +12,26 @@ import 'package:shared_api/shared_api.dart';
 /// - Stale-while-revalidate: serve expired data now, refresh in background.
 /// - Respects "Cache-Control" (max-age, no-store, no-cache) and "Expires".
 /// - Gracefully handles storage failures: the network path always works.
-/// - Robust key generation considering host, path, sorted queries and language.
+/// - Robust key generation considering host, path, sorted queries and the
+///   request headers listed in [varyHeaders] (`Accept-Language` by default),
+///   or a fully custom [cacheKeyBuilder].
 ///
 /// [ApiClient] installs this interceptor automatically for its [HttpCache].
 class CacheInterceptor extends Interceptor {
   final HttpCache cache;
   final Duration defaultTtl;
+
+  /// Request headers the default cache key varies on, so responses that
+  /// differ by e.g. tenant, currency or country are cached separately.
+  /// Ignored when [cacheKeyBuilder] is set.
+  final List<String> varyHeaders;
+
+  /// Builds the cache key for a request, replacing the default key
+  /// ([defaultCacheKey]) entirely.
+  final String Function(RequestOptions options)? cacheKeyBuilder;
+
+  /// Default [varyHeaders]: the cache varies by language only.
+  static const defaultVaryHeaders = [HttpHeaders.acceptLanguageHeader];
 
   /// Dio used to fire background refreshes for
   /// [HttpCachePolicy.staleWhileRevalidate] and to recover from a `304` whose
@@ -37,6 +51,8 @@ class CacheInterceptor extends Interceptor {
     required this.cache,
     this.defaultTtl = const Duration(minutes: 5),
     this.dio,
+    this.varyHeaders = defaultVaryHeaders,
+    this.cacheKeyBuilder,
   });
 
   @override
@@ -237,19 +253,31 @@ class CacheInterceptor extends Interceptor {
     } catch (_) {}
   }
 
-  /// Implementation of robust key generation.
+  String _getCacheKey(RequestOptions options) =>
+      cacheKeyBuilder?.call(options) ??
+      defaultCacheKey(options, varyHeaders: varyHeaders);
+
+  /// Default cache key: base URL, path, query parameters sorted
+  /// alphabetically (to avoid redundant entries for the same conceptual
+  /// request) and the value of each of [varyHeaders].
   ///
-  /// Includes sanitized path and query parameters sorted alphabetically
-  /// to avoid redundant entries for the same conceptual request.
-  String _getCacheKey(RequestOptions options) {
+  /// `Accept-Language` is labelled `lang` so keys stay compatible with
+  /// entries stored by earlier versions.
+  static String defaultCacheKey(
+    RequestOptions options, {
+    List<String> varyHeaders = defaultVaryHeaders,
+  }) {
     final query = Map.from(options.queryParameters);
     final sortedKeys = query.keys.map((k) => k.toString()).toList()..sort();
     final queryString = sortedKeys.map((k) => '$k=${query[k]}').join('&');
 
-    // Include Accept-Language in cache key to vary cache by language
-    final lang = options.headers[HttpHeaders.acceptLanguageHeader] ?? '';
+    final vary = varyHeaders.map((header) {
+      final name = header.toLowerCase();
+      final label = name == HttpHeaders.acceptLanguageHeader ? 'lang' : name;
+      return '&$label=${options.headers[header] ?? ''}';
+    }).join();
 
-    return '${options.baseUrl}${options.path}?$queryString&lang=$lang';
+    return '${options.baseUrl}${options.path}?$queryString$vary';
   }
 
   /// Parses "Cache-Control" and "Expires" into a TTL and store permission.
