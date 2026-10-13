@@ -43,9 +43,9 @@ class ApiCoordinator extends Coordinator<TokenState> {
   Future<void> onNetworkRestored() async {
     final state = await session.read();
     if (state is AuthorizedState) {
-      if (state.willExpireIn(const Duration(minutes: 2))) {
-        _performTokenRefresh(state);
-      }
+      // Refresh timers are not scheduled while offline, so always reschedule
+      // here. refreshDelay already shortens the wait for near-expiry tokens.
+      _performTokenRefresh(state);
       streaming?.connect();
     }
   }

@@ -519,11 +519,7 @@ void main() {
         expect(h.client.requests, hasLength(1));
         h.dispose();
       });
-    },
-        skip: 'BUG: a session that changes while offline never gets a refresh '
-            'timer; onNetworkRestored only refreshes when the token expires '
-            'within 2 minutes (lib/src/coordinator.dart:46, '
-            'lib/src/core/coordinator/coordinator.dart:115)');
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -674,10 +670,7 @@ void main() {
         async.flushMicrotasks();
         expect(async.pendingTimers, isEmpty);
       });
-    },
-        skip: 'BUG: dispose() does not guard _performRefresh; an in-flight '
-            'refresh that fails after dispose schedules a new retry Timer '
-            '(lib/src/core/coordinator/coordinator.dart:124-153, retry Timer at :149)');
+    });
   });
 }
 

@@ -19,6 +19,7 @@ abstract class Coordinator<S extends HttpState> {
 
   Timer? _refreshTimer;
   int _refreshAttempts = 0;
+  bool _disposed = false;
   NetworkStatus _currentStatus = NetworkStatus.online;
 
   StreamSubscription? _sessionSub;
@@ -112,7 +113,7 @@ abstract class Coordinator<S extends HttpState> {
   void scheduleRefresh(Duration delay, Future<bool> Function() refreshAction) {
     stopTimer();
 
-    if (_currentStatus == NetworkStatus.offline) return;
+    if (_disposed || _currentStatus == NetworkStatus.offline) return;
 
     if (delay == Duration.zero) {
       _performRefresh(refreshAction);
@@ -124,6 +125,8 @@ abstract class Coordinator<S extends HttpState> {
   Future<void> _performRefresh(Future<bool> Function() refreshAction) async {
     try {
       final isSuccessful = await refreshAction();
+      // The coordinator may have been disposed while the request was in flight.
+      if (_disposed) return;
       if (isSuccessful) {
         _refreshAttempts = 0;
         for (var o in _observers)
@@ -132,12 +135,15 @@ abstract class Coordinator<S extends HttpState> {
         handleRefreshFailure(refreshAction);
       }
     } catch (e) {
+      if (_disposed) return;
       handleRefreshFailure(refreshAction);
     }
   }
 
   /// Default retry logic for refresh failures.
   void handleRefreshFailure(Future<bool> Function() refreshAction) {
+    if (_disposed) return;
+
     for (var o in _observers)
       o.onTokenRefresh(_refreshAttempts, Duration.zero, false);
 
@@ -161,6 +167,7 @@ abstract class Coordinator<S extends HttpState> {
   }
 
   void dispose() {
+    _disposed = true;
     _sessionSub?.cancel();
     _networkSub?.cancel();
     _streamingStatusSub?.cancel();
