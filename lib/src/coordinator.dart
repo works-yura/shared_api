@@ -9,6 +9,15 @@ class ApiCoordinator extends Coordinator<TokenState> {
   final MessagingService? _messagingService;
   final RefreshRequestFactory _refreshRequestFactory;
 
+  /// HTTP cache cleared on sign-out / account switch, so one user's cached
+  /// responses are never served to another.
+  final HttpCache? _cache;
+
+  /// User the cached responses belong to. `_unknownOwner` until the first
+  /// session event, so the initial restore doesn't wipe the cache.
+  Object? _cacheOwner = _unknownOwner;
+  static const _unknownOwner = Object();
+
   ApiCoordinator({
     required super.session,
     required super.connectivity,
@@ -16,10 +25,12 @@ class ApiCoordinator extends Coordinator<TokenState> {
     required RefreshRequestFactory refreshRequestFactory,
     super.streaming,
     MessagingService? messagingService,
+    HttpCache? cache,
     super.observers,
     super.retry,
   })  : _client = client,
         _messagingService = messagingService,
+        _cache = cache,
         _refreshRequestFactory = refreshRequestFactory;
 
   @override
@@ -43,6 +54,8 @@ class ApiCoordinator extends Coordinator<TokenState> {
 
   @override
   void onSessionChanged(TokenState? state) {
+    _syncCacheOwner(state);
+
     if (state is AuthorizedState) {
       final delay = state.refreshDelay;
       debugPrint(
@@ -69,6 +82,15 @@ class ApiCoordinator extends Coordinator<TokenState> {
           '[ApiCoordinator] Session changed: ${state.runtimeType}. Disconnecting streaming.');
       streaming?.disconnect();
     }
+  }
+
+  void _syncCacheOwner(TokenState? state) {
+    final owner = state is AuthorizedState ? state.userId : null;
+    final previous = _cacheOwner;
+    _cacheOwner = owner;
+    if (identical(previous, _unknownOwner) || previous == owner) return;
+    debugPrint('[ApiCoordinator] Session owner changed. Clearing HTTP cache.');
+    _cache?.clear();
   }
 
   @override
