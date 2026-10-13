@@ -41,16 +41,34 @@ class CacheEntry {
       };
 
   /// Creates an entry from a JSON-compatible map.
-  factory CacheEntry.fromJson(Map<String, dynamic> json) => CacheEntry(
-        data: json['data'],
-        expiresAt: DateTime.parse(json['expiresAt']),
-        createdAt: DateTime.parse(json['createdAt']),
-        headers: (json['headers'] as Map<String, dynamic>).map(
-          (k, v) => MapEntry(k, List<String>.from(v as List)),
-        ),
-        eTag: json['eTag'] as String?,
-        lastModified: json['lastModified'] as String?,
-      );
+  factory CacheEntry.fromJson(Map<String, dynamic> json) {
+    // Tolerant parsing: a corrupt entry is treated as expired, never thrown.
+    final expiresRaw = json['expiresAt'];
+    final createdRaw = json['createdAt'];
+    final headersRaw = json['headers'];
+    final eTagRaw = json['eTag'];
+    final lastModifiedRaw = json['lastModified'];
+
+    return CacheEntry(
+      data: json['data'],
+      expiresAt:
+          (expiresRaw is String ? DateTime.tryParse(expiresRaw) : null) ??
+              DateTime.now(),
+      createdAt:
+          (createdRaw is String ? DateTime.tryParse(createdRaw) : null) ??
+              DateTime.now(),
+      headers: headersRaw is Map
+          ? headersRaw.map(
+              (k, v) => MapEntry(
+                k.toString(),
+                v is List ? v.map((e) => e.toString()).toList() : <String>[],
+              ),
+            )
+          : const {},
+      eTag: eTagRaw is String ? eTagRaw : null,
+      lastModified: lastModifiedRaw is String ? lastModifiedRaw : null,
+    );
+  }
 }
 
 /// Interface for HTTP response caching implementations.

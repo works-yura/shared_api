@@ -37,16 +37,21 @@ class OutboxEntry {
 
   /// Deserializes entry from external storage
   factory OutboxEntry.fromJson(Map<String, dynamic> json) {
-    final isBinary = json['is_binary'] as bool? ?? false;
-    final dynamic rawPayload = json['payload'];
+    // Tolerant parsing: one corrupt persisted row must not break outbox loading.
+    final isBinaryRaw = json['is_binary'];
+    final isBinary = isBinaryRaw is bool && isBinaryRaw;
+    final rawPayload = json['payload'];
+    final idRaw = json['id'];
+    final createdRaw = json['createdAt'];
+    final retryRaw = json['retryCount'];
 
     return OutboxEntry(
-      id: json['id'] as String,
-      payload: isBinary
-          ? Uint8List.fromList(List<int>.from(rawPayload as List))
+      id: idRaw is String && idRaw.isNotEmpty ? idRaw : null,
+      payload: isBinary && rawPayload is List
+          ? Uint8List.fromList(List<int>.from(rawPayload))
           : rawPayload,
-      createdAt: DateTime.parse(json['createdAt'] as String),
-      retryCount: json['retryCount'] as int? ?? 0,
+      createdAt: createdRaw is String ? DateTime.tryParse(createdRaw) : null,
+      retryCount: retryRaw is int ? retryRaw : 0,
     );
   }
 }
