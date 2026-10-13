@@ -1,6 +1,7 @@
 import 'dart:async';
 import '/src/core/core.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'access_token.dart';
 
 /// Represents the internal state of the WebSocket connection.
 sealed class WSState {
@@ -58,6 +59,30 @@ class WebSocketStreaming<S extends HttpState, C extends HttpCredentials>
   final Duration heartbeatInterval;
   final Duration requestTimeout;
 
+  /// Wire names: event routing, correlation id, envelope, ping/pong.
+  final StreamingProtocol protocol;
+
+  /// Endpoint path, appended to `credentials.path`.
+  final String path;
+
+  /// Extracts the access token from the session state; null keeps the
+  /// stream disconnected. Defaults to [sessionAccessToken].
+  final StreamingTokenResolver<S> accessToken;
+
+  /// Query parameter carrying the access token (`?token=`), or null to keep
+  /// the token out of the URL.
+  ///
+  /// The default is kept only because existing servers read the token from
+  /// the query string. URLs are routinely written to proxy, load balancer and
+  /// server access logs, so a token there can leak. Browsers cannot set
+  /// headers on a WebSocket handshake; prefer setting this to null and
+  /// authenticating with [authMessage] when the server supports it.
+  final String? tokenQueryParameter;
+
+  /// Optional first frame sent right after the socket opens, before any
+  /// other message, e.g. `(t) => {'type': 'auth', 'token': t}`.
+  final Map<String, dynamic> Function(String token)? authMessage;
+
   WebSocketChannel? _channel;
   WSState _internalState = const DisconnectedState();
 
@@ -82,6 +107,11 @@ class WebSocketStreaming<S extends HttpState, C extends HttpCredentials>
     this.retryConfig = const RetryConfig(),
     this.heartbeatInterval = const Duration(seconds: 30),
     this.requestTimeout = const Duration(seconds: 15),
+    this.protocol = StreamingProtocol.standard,
+    this.path = '/ws',
+    this.accessToken = sessionAccessToken,
+    this.tokenQueryParameter = 'token',
+    this.authMessage,
   });
 
   @override
@@ -176,22 +206,7 @@ class WebSocketStreaming<S extends HttpState, C extends HttpCredentials>
 
   Future<void> _establishConnection() async {
     try {
-      final state = await session?.read();
-
-      // We assume that AuthorizedState has 'access' property.
-      // If S is generic, we might need an interface like HasToken.
-      // For now, let's keep it simple and cast or check if we know S.
-      // Alternatively, we can use a delegate to get the token.
-
-      String? token;
-      if (state != null && state.toString().contains('AuthorizedState')) {
-        // This is a bit hacky, but without a common interface for TokenState
-        // that includes 'access', we have to handle it specifically or use more DIP.
-        // Let's assume for now that S is some form of TokenState we can handle.
-        try {
-          token = (state as dynamic).access;
-        } catch (_) {}
-      }
+      final token = accessToken(await session?.read());
 
       if (token == null) {
         _transition(
@@ -208,11 +223,14 @@ class WebSocketStreaming<S extends HttpState, C extends HttpCredentials>
       await _channel!.ready;
 
       // Negotiation: Server selects one of our protocols
-      final protocol = _channel!.protocol;
-      final selectedCodec = codecs[protocol] ?? codecs[defaultProtocol]!;
+      final negotiated = _channel!.protocol;
+      final selectedCodec = codecs[negotiated] ?? codecs[defaultProtocol]!;
+
+      final auth = authMessage;
+      if (auth != null) _channel!.sink.add(selectedCodec.encode(auth(token)));
 
       _transition(ConnectedState(
-          codec: selectedCodec, protocol: protocol ?? 'unknown'));
+          codec: selectedCodec, protocol: negotiated ?? 'unknown'));
 
       _channel!.stream.listen(
         _onMessage,
@@ -257,7 +275,7 @@ class WebSocketStreaming<S extends HttpState, C extends HttpCredentials>
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(heartbeatInterval, (timer) {
       if (isConnected) {
-        _sendRaw({'type': 'ping'});
+        _sendRaw(protocol.ping);
       }
     });
   }
@@ -276,17 +294,17 @@ class WebSocketStreaming<S extends HttpState, C extends HttpCredentials>
       // Async decode with Isolate
       final Map<String, dynamic> data = await codec.decode(message);
 
-      final response =
-          StreamingResponse(data: data, type: data['type'] as String?);
+      final type = protocol.typeOf(data);
+      final response = StreamingResponse(data: data, type: type);
 
       // 1. Intercept Response
       for (final i in interceptors) {
         i.onResponse(response);
       }
 
-      if (data['type'] == 'pong') return;
+      if (type == protocol.pongType) return;
 
-      final correlationId = data['correlation_id'] as String?;
+      final correlationId = data[protocol.correlationIdField] as String?;
       if (correlationId != null &&
           _pendingRequests.containsKey(correlationId)) {
         final completer = _pendingRequests.remove(correlationId)!;
@@ -322,7 +340,7 @@ class WebSocketStreaming<S extends HttpState, C extends HttpCredentials>
       i.onRequest(options);
     }
 
-    _sendRaw(options.toJson());
+    _sendRaw(options.toJson(protocol));
   }
 
   @override
@@ -342,7 +360,8 @@ class WebSocketStreaming<S extends HttpState, C extends HttpCredentials>
       final completer = Completer<StreamingResponse>();
 
       final options = request.onRequest();
-      final payload = options.toJson()..['correlation_id'] = correlationId;
+      final payload = options.toJson(protocol)
+        ..[protocol.correlationIdField] = correlationId;
 
       // Intercept Request
       for (final i in interceptors) {
@@ -400,7 +419,8 @@ class WebSocketStreaming<S extends HttpState, C extends HttpCredentials>
     return _eventController.stream
         .where((data) => data is Map<String, dynamic>)
         .map((data) => JsonObject(data as Map<String, dynamic>))
-        .where((json) => json.as<String>('type', '') == eventParser.type)
+        .where((json) =>
+            json.as<String>(protocol.typeField, '') == eventParser.type)
         .map((json) => eventParser.onResponse(json));
   }
 
@@ -414,13 +434,16 @@ class WebSocketStreaming<S extends HttpState, C extends HttpCredentials>
     }
   }
 
-  Uri _buildUri(String token) => Uri(
-        scheme: credentials.isSecure ? 'wss' : 'ws',
-        host: credentials.host,
-        port: credentials.port,
-        path: '${credentials.path ?? ''}/ws',
-        queryParameters: {'token': token},
-      );
+  Uri _buildUri(String token) {
+    final param = tokenQueryParameter;
+    return Uri(
+      scheme: credentials.isSecure ? 'wss' : 'ws',
+      host: credentials.host,
+      port: credentials.port,
+      path: '${credentials.path ?? ''}$path',
+      queryParameters: param == null ? null : {param: token},
+    );
+  }
 
   @override
   void dispose() {
