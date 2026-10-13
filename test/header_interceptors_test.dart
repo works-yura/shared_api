@@ -283,6 +283,25 @@ void main() {
       expect(r.error.response?.statusCode, 402);
       expect(r.error.type, DioExceptionType.badResponse);
     });
+
+    test('custom matches replaces the default contract', () async {
+      var calls = 0;
+      final t = _setup(
+        SubscriptionInterceptor(
+          onSubscriptionRequired: () => calls++,
+          matches: (e) => e.response?.statusCode == 403,
+        ),
+        respond: (o) => o.path == '/limited'
+            ? _status(403, '{"code":"PLAN_LIMIT"}')
+            : _status(402, '{"code":"SUBSCRIPTION_REQUIRED"}'),
+      );
+
+      for (final path in ['/limited', '/premium']) {
+        await expectLater(
+            t.dio.get<dynamic>(path), throwsA(isA<DioException>()));
+      }
+      expect(calls, 1, reason: 'only the 403 matches');
+    });
   });
 
   group('VersionInterceptor', () {
