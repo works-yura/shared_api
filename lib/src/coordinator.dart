@@ -9,6 +9,10 @@ class ApiCoordinator extends Coordinator<TokenState> {
   final MessagingService? _messagingService;
   final RefreshRequestFactory _refreshRequestFactory;
 
+  /// Whether a failed scheduled refresh means the session is gone. Keep it in
+  /// sync with [RefreshTokenInterceptor.isRefreshRejected].
+  final RefreshRejectedPredicate _isRefreshRejected;
+
   /// HTTP cache cleared on sign-out / account switch, so one user's cached
   /// responses are never served to another.
   final HttpCache? _cache;
@@ -30,12 +34,14 @@ class ApiCoordinator extends Coordinator<TokenState> {
     MessagingService? messagingService,
     HttpCache? cache,
     String Function(AuthorizedState state)? userIdResolver,
+    RefreshRejectedPredicate isRefreshRejected = defaultIsRefreshRejected,
     super.observers,
     super.retry,
   })  : _client = client,
         _messagingService = messagingService,
         _cache = cache,
         _userIdResolver = userIdResolver ?? _defaultUserId,
+        _isRefreshRejected = isRefreshRejected,
         _refreshRequestFactory = refreshRequestFactory;
 
   @override
@@ -140,8 +146,7 @@ class ApiCoordinator extends Coordinator<TokenState> {
               result.fold((f) => f, (s) => throw StateError('Unreachable'));
           debugPrint('[ApiCoordinator] Refresh failed: $failure');
 
-          if (failure is HttpResponseException &&
-              (failure.status == 401 || failure.status == 403)) {
+          if (_isRefreshRejected(failure)) {
             await session.update(TokenState.unauthorized(
                 reason: UnauthorizedReason.sessionExpired));
             return true; // Stop retrying on auth errors

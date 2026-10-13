@@ -139,6 +139,9 @@ _Harness _build({
   String validAccess = 'access-old',
   Future<_Reply> Function(Map<String, dynamic> body)? onRefresh,
   RefreshRequestFactory? refreshFactory,
+  DioErrorPredicate isUnauthorized = defaultIsUnauthorized,
+  DioErrorPredicate isSessionExpired = defaultIsSessionExpired,
+  RefreshRejectedPredicate isRefreshRejected = defaultIsRefreshRejected,
 }) {
   final server = _FakeServer(
     validAccess: validAccess,
@@ -172,6 +175,9 @@ _Harness _build({
     session: session,
     client: client,
     refreshRequestFactory: refreshFactory ?? (t) => _RefreshRequest(t),
+    isUnauthorized: isUnauthorized,
+    isSessionExpired: isSessionExpired,
+    isRefreshRejected: isRefreshRejected,
   ));
 
   return _Harness(dio, server, session);
@@ -548,6 +554,195 @@ void main() {
       );
     });
   });
+
+  group('RefreshTokenInterceptor extension points', () {
+    test('custom isUnauthorized: 419 triggers a refresh', () async {
+      late _Harness h;
+      h = _build(
+        initial: _authorized(),
+        isUnauthorized: (e) =>
+            e.response?.statusCode == 401 || e.response?.statusCode == 419,
+        onRefresh: (_) async {
+          h.server.validAccess = 'access-new';
+          return const _Reply(200, {
+            'accessToken': 'access-new',
+            'refreshToken': 'refresh-new',
+            'expiresIn': 3600,
+          });
+        },
+      );
+      h.server.fixed['/api/v1/legacy'] = const _Reply(419, {});
+
+      await expectLater(
+        h.dio.get('/api/v1/legacy').timeout(_timeout),
+        throwsA(isA<DioException>()
+            .having((e) => e.response?.statusCode, 'status', 419)),
+      );
+      expect(h.server.refreshCalls, 1);
+    });
+
+    test('custom isSessionExpired: logs out on the retry, no refresh',
+        () async {
+      final h = _build(
+        initial: _authorized(),
+        isSessionExpired: (e) =>
+            (e.response?.data as Map?)?['code'] == 'SESSION_GONE',
+      );
+      h.server.fixed['/api/v1/users/me'] =
+          const _Reply(401, {'code': 'SESSION_GONE'});
+
+      await expectLater(
+        h.dio.get('/api/v1/users/me').timeout(_timeout),
+        throwsA(isA<DioException>()),
+      );
+      expect(h.server.refreshCalls, 0);
+      expect(h.session.updates.single, isA<UnauthorizedState>());
+    });
+
+    test('custom isSessionExpired replaces the default body codes', () async {
+      final h = _build(initial: _authorized(), isSessionExpired: (_) => false);
+      h.server.fixed['/api/v1/users/me'] =
+          const _Reply(401, {'message': 'authentication.session_expired'});
+
+      await expectLater(
+        h.dio.get('/api/v1/users/me').timeout(_timeout),
+        throwsA(isA<DioException>()),
+      );
+      // Not treated as expired -> goes on to refresh.
+      expect(h.server.refreshCalls, 1);
+    });
+
+    test('custom isRefreshRejected: refresh 400 logs out', () async {
+      final h = _build(
+        initial: _authorized(),
+        onRefresh: (_) async => const _Reply(400, {'message': 'bad token'}),
+        isRefreshRejected: (f) => f is HttpResponseException && f.status == 400,
+      );
+      h.server.validAccess = 'rotated-on-server';
+
+      await expectLater(
+        h.dio.get('/api/v1/users/me').timeout(_timeout),
+        throwsA(isA<InvalidRefreshTokenException>()),
+      );
+      expect(h.session.updates.single, isA<UnauthorizedState>());
+    });
+
+    test('custom isRefreshRejected: refresh 401 keeps the session', () async {
+      final h = _build(
+        initial: _authorized(),
+        onRefresh: (_) async => const _Reply(401, {'message': 'nope'}),
+        isRefreshRejected: (_) => false,
+      );
+      h.server.validAccess = 'rotated-on-server';
+
+      await expectLater(
+        h.dio.get('/api/v1/users/me').timeout(_timeout),
+        throwsA(isA<InvalidRefreshTokenException>()),
+      );
+      expect(h.session.updates, isEmpty);
+      expect(await h.session.read(), isA<AuthorizedState>());
+    });
+
+    test('custom header name/value and isSecured are used for the replay',
+        () async {
+      final session = _Session(_authorized(access: 'tok'));
+      final dio = Dio(BaseOptions(baseUrl: 'https://api.test'));
+      final seen = <String?>[];
+      var first = true;
+      dio.httpClientAdapter = _Custom((options) {
+        seen.add(options.headers['X-Api-Token'] as String?);
+        if (first) {
+          first = false;
+          return 401;
+        }
+        return 200;
+      });
+      final client = ApiClient<TokenState, ApiCredentials>(
+        dio: dio,
+        config: const HttpConfig(),
+        session: session,
+        credentials: const ApiCredentials(
+          host: 'api.test',
+          scheme: 'https',
+          clientID: 'id',
+          clientSecret: 'secret',
+        ),
+        cache: MapHttpCache(),
+      );
+      dio.interceptors.add(BearerTokenInterceptor(
+        session: session,
+        headerName: 'X-Api-Token',
+        headerValue: (t) => 'Token $t',
+      ));
+      dio.interceptors.add(RefreshTokenInterceptor(
+        dio: dio,
+        session: session,
+        client: client,
+        refreshRequestFactory: (t) => _RefreshRequest(t),
+        authHeaderName: 'X-Api-Token',
+        authHeaderValue: (t) => 'Token $t',
+      ));
+
+      final res = await dio.get('/api/v1/users/me').timeout(_timeout);
+      expect(res.statusCode, 200);
+      // 401 on a request carrying the custom header -> secured -> retried
+      // with the custom header value.
+      expect(seen, ['Token tok', 'Token tok']);
+    });
+
+    test('custom isSecured: unsecured request 401 passes straight through',
+        () async {
+      final h = _build(initial: _authorized());
+      h.dio.interceptors.removeWhere((i) => i is RefreshTokenInterceptor);
+      h.dio.interceptors.add(RefreshTokenInterceptor(
+        dio: h.dio,
+        session: h.session,
+        client: ApiClient<TokenState, ApiCredentials>(
+          dio: h.dio,
+          config: const HttpConfig(),
+          session: h.session,
+          credentials: const ApiCredentials(
+            host: 'api.test',
+            scheme: 'https',
+            clientID: 'id',
+            clientSecret: 'secret',
+          ),
+          cache: MapHttpCache(),
+        ),
+        refreshRequestFactory: (t) => _RefreshRequest(t),
+        isSecured: (_) => false,
+      ));
+      h.server.validAccess = 'rotated-on-server';
+
+      await expectLater(
+        h.dio.get('/api/v1/users/me').timeout(_timeout),
+        throwsA(isA<DioException>()
+            .having((e) => e.response?.statusCode, 'status', 401)),
+      );
+      expect(h.server.calls.length, 1);
+      expect(h.server.refreshCalls, 0);
+    });
+  });
+}
+
+/// Answers with the status returned by [status] for every call.
+class _Custom implements HttpClientAdapter {
+  final int Function(RequestOptions options) status;
+  _Custom(this.status);
+
+  @override
+  Future<ResponseBody> fetch(RequestOptions options,
+          Stream<Uint8List>? requestStream, Future<void>? cancelFuture) =>
+      Future.value(ResponseBody.fromString(
+        '{}',
+        status(options),
+        headers: {
+          Headers.contentTypeHeader: [Headers.jsonContentType],
+        },
+      ));
+
+  @override
+  void close({bool force = false}) {}
 }
 
 /// Like [_RefreshRequest] but forces an Authorization header onto the call.
