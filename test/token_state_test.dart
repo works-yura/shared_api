@@ -34,7 +34,7 @@ void main() {
       expect(state.refreshDelay.inSeconds, equals(30));
     });
 
-    test('returns zero for actually expired tokens created long ago', () {
+    test('waits a 10s floor for expired tokens created long ago', () {
       final longAgo = DateTime.now().subtract(const Duration(hours: 2));
       final state = TokenState.authorized(
         access: 'access',
@@ -43,7 +43,8 @@ void main() {
         createdAt: longAgo,
       ) as AuthorizedState;
 
-      expect(state.refreshDelay, equals(Duration.zero));
+      // Floor prevents a tight refresh loop on clock skew / failed refresh.
+      expect(state.refreshDelay, equals(const Duration(seconds: 10)));
     });
 
     test('clamps buffer between 30s and 300s', () {
