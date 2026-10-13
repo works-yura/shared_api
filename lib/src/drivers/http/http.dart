@@ -1,5 +1,4 @@
 import 'package:shared_api/src/core/utils/try.dart';
-import 'dart:math' as math;
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
@@ -48,21 +47,27 @@ class ApiClient<S extends HttpState, C extends HttpCredentials>
     required this.cache,
     this.observers = const [],
     this.errorEnvelope = const ErrorEnvelopeParser(),
+    CacheInterceptor Function(HttpCache cache)? cacheInterceptor,
   }) {
-    _installCacheInterceptor();
+    _installCacheInterceptor(cacheInterceptor);
   }
 
   /// Wires [cache] into [dio] via [CacheInterceptor], unless one is already
   /// installed. It goes first so a cache hit short-circuits auth, retry and
   /// network interceptors (and stale data can be served offline).
-  void _installCacheInterceptor() {
+  ///
+  /// [build] customises it (e.g. `varyHeaders`, `defaultTtl`,
+  /// `cacheKeyBuilder`); by default `CacheInterceptor(cache: cache)`.
+  void _installCacheInterceptor(
+      CacheInterceptor Function(HttpCache cache)? build) {
     for (final interceptor in dio.interceptors) {
       if (interceptor is CacheInterceptor) {
         interceptor.dio ??= dio;
         return;
       }
     }
-    dio.interceptors.insert(0, CacheInterceptor(cache: cache, dio: dio));
+    final interceptor = build?.call(cache) ?? CacheInterceptor(cache: cache);
+    dio.interceptors.insert(0, interceptor..dio ??= dio);
   }
 
   /// Configure all requests
@@ -126,9 +131,6 @@ class ApiClient<S extends HttpState, C extends HttpCredentials>
 
       final httpResponse = _mapDioResponse(response);
       final result = request.onResponse(httpResponse);
-
-      debugPrint(
-          '[ApiClient] Headers: ${response.requestOptions.headers.keys.where((k) => k.toLowerCase() == 'authorization' || k.toLowerCase() == 'x-session').map((k) => '$k: ${response.requestOptions.headers[k].toString().substring(0, math.min(15, response.requestOptions.headers[k].toString().length))}...').join(', ')}');
 
       debugPrint(
           '[ApiClient] Result type: ${request.onResponse.runtimeType.toString().split('=>').last.trim()}');

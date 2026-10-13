@@ -199,6 +199,30 @@ void main() {
     expect(res.data, {'ok': true});
   });
 
+  test('ApiClient accepts a custom CacheInterceptor', () {
+    final dio = Dio();
+    final cache = MapHttpCache();
+
+    ApiClient<TokenState, ApiCredentials>(
+      dio: dio,
+      config: const HttpConfig(),
+      session: SharedApiSession(
+        onSave: (_) async {},
+        onDelete: () async {},
+        onLoad: () async => null,
+      ),
+      credentials: const ApiCredentials(host: 'api.test'),
+      cache: cache,
+      cacheInterceptor: (c) =>
+          CacheInterceptor(cache: c, varyHeaders: const ['x-tenant']),
+    );
+
+    final installed = dio.interceptors.first as CacheInterceptor;
+    expect(installed.varyHeaders, ['x-tenant']);
+    expect(installed.cache, same(cache));
+    expect(installed.dio, same(dio));
+  });
+
   test('ApiClient installs a single CacheInterceptor first', () {
     final dio = Dio()..interceptors.add(InterceptorsWrapper());
     final cache = MapHttpCache();
