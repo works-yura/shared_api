@@ -76,7 +76,8 @@ ResponseBody _status(int status, String body,
 void main() {
   group('BearerTokenInterceptor', () {
     test('adds "Authorization: Bearer <access>" for AuthorizedState', () async {
-      final t = _setup(BearerTokenInterceptor(session: _FakeSession(_auth('abc'))));
+      final t =
+          _setup(BearerTokenInterceptor(session: _FakeSession(_auth('abc'))));
 
       await t.dio.get<dynamic>('/me');
 
@@ -88,20 +89,20 @@ void main() {
 
       await t.dio.get<dynamic>('/me');
 
-      expect(
-          t.adapter.requests.single.headers.containsKey('Authorization'), false);
+      expect(t.adapter.requests.single.headers.containsKey('Authorization'),
+          false);
     });
 
     test('no Authorization header for UnauthorizedState', () async {
       final t = _setup(BearerTokenInterceptor(
-        session: _FakeSession(const UnauthorizedState(
-            reason: UnauthorizedReason.sessionExpired)),
+        session: _FakeSession(
+            const UnauthorizedState(reason: UnauthorizedReason.sessionExpired)),
       ));
 
       await t.dio.get<dynamic>('/me');
 
-      expect(
-          t.adapter.requests.single.headers.containsKey('Authorization'), false);
+      expect(t.adapter.requests.single.headers.containsKey('Authorization'),
+          false);
     });
 
     test('refresh requests are skipped and session is not read', () async {
@@ -113,13 +114,14 @@ void main() {
         options: Options(extra: {HttpConstants.refreshRequestKey: true}),
       );
 
-      expect(
-          t.adapter.requests.single.headers.containsKey('Authorization'), false);
+      expect(t.adapter.requests.single.headers.containsKey('Authorization'),
+          false);
       expect(session.reads, 0);
     });
 
     test('refresh flag other than true does not skip the header', () async {
-      final t = _setup(BearerTokenInterceptor(session: _FakeSession(_auth('abc'))));
+      final t =
+          _setup(BearerTokenInterceptor(session: _FakeSession(_auth('abc'))));
 
       await t.dio.get<dynamic>(
         '/me',
@@ -147,7 +149,8 @@ void main() {
     });
 
     test('overrides a caller-supplied Authorization when authorized', () async {
-      final t = _setup(BearerTokenInterceptor(session: _FakeSession(_auth('abc'))));
+      final t =
+          _setup(BearerTokenInterceptor(session: _FakeSession(_auth('abc'))));
 
       await t.dio.get<dynamic>('/me',
           options: Options(headers: {'Authorization': 'Basic xyz'}));
@@ -155,8 +158,7 @@ void main() {
       expect(t.adapter.requests.single.headers['Authorization'], 'Bearer abc');
     });
 
-    test('keeps a caller-supplied Authorization when not authorized',
-        () async {
+    test('keeps a caller-supplied Authorization when not authorized', () async {
       final t = _setup(BearerTokenInterceptor(session: _FakeSession()));
 
       await t.dio.get<dynamic>('/me',
@@ -183,7 +185,8 @@ void main() {
       return (calls: calls, error: error!);
     }
 
-    test('402 with top-level SUBSCRIPTION_REQUIRED calls callback once and '
+    test(
+        '402 with top-level SUBSCRIPTION_REQUIRED calls callback once and '
         'propagates the error', () async {
       final r = await run402(
           _status(402, '{"code":"SUBSCRIPTION_REQUIRED","message":"pay"}'));
@@ -196,16 +199,16 @@ void main() {
 
     test('402 with SUBSCRIPTION_REQUIRED in metadata calls callback once',
         () async {
-      final r = await run402(_status(
-          402, '{"message":"pay","metadata":{"code":"SUBSCRIPTION_REQUIRED"}}'));
+      final r = await run402(_status(402,
+          '{"message":"pay","metadata":{"code":"SUBSCRIPTION_REQUIRED"}}'));
 
       expect(r.calls, 1);
       expect(r.error.response?.statusCode, 402);
     });
 
     test('top-level code wins over metadata code', () async {
-      final r = await run402(_status(402,
-          '{"code":"OTHER","metadata":{"code":"SUBSCRIPTION_REQUIRED"}}'));
+      final r = await run402(_status(
+          402, '{"code":"OTHER","metadata":{"code":"SUBSCRIPTION_REQUIRED"}}'));
 
       expect(r.calls, 0);
     });
@@ -225,21 +228,20 @@ void main() {
     test('other statuses with SUBSCRIPTION_REQUIRED do not call callback',
         () async {
       for (final status in [400, 401, 403, 500]) {
-        final r = await run402(
-            _status(status, '{"code":"SUBSCRIPTION_REQUIRED"}'));
+        final r =
+            await run402(_status(status, '{"code":"SUBSCRIPTION_REQUIRED"}'));
         expect(r.calls, 0, reason: 'status $status');
         expect(r.error.response?.statusCode, status);
       }
     });
 
     test('402 with non-map body does not call callback', () async {
-      final text = await run402(_status(402, 'SUBSCRIPTION_REQUIRED',
-          contentType: 'text/plain'));
+      final text = await run402(
+          _status(402, 'SUBSCRIPTION_REQUIRED', contentType: 'text/plain'));
       expect(text.calls, 0);
       expect(text.error.response?.statusCode, 402);
 
-      final list =
-          await run402(_status(402, '["SUBSCRIPTION_REQUIRED"]'));
+      final list = await run402(_status(402, '["SUBSCRIPTION_REQUIRED"]'));
       expect(list.calls, 0);
       expect(list.error.response?.statusCode, 402);
     });
@@ -248,13 +250,13 @@ void main() {
       var calls = 0;
       final dio = Dio(BaseOptions(baseUrl: 'https://api.test'));
       dio.httpClientAdapter = _ThrowingAdapter();
-      dio.interceptors.add(
-          SubscriptionInterceptor(onSubscriptionRequired: () => calls++));
+      dio.interceptors
+          .add(SubscriptionInterceptor(onSubscriptionRequired: () => calls++));
 
       await expectLater(
         dio.get<dynamic>('/x'),
-        throwsA(isA<DioException>().having(
-            (e) => e.type, 'type', DioExceptionType.connectionError)),
+        throwsA(isA<DioException>()
+            .having((e) => e.type, 'type', DioExceptionType.connectionError)),
       );
       expect(calls, 0);
     });
@@ -266,11 +268,7 @@ void main() {
       expect(r.calls, 0);
       expect(r.error.response?.statusCode, 402);
       expect(r.error.type, DioExceptionType.badResponse);
-    },
-        skip: 'BUG: lib/src/drivers/http/interceptors/subscription.dart:15 — '
-            "data['metadata']?['code'] throws when metadata is not a Map "
-            '(e.g. a String); the TypeError replaces the original 402 '
-            'DioException, so callers lose response/statusCode.');
+    });
   });
 
   group('VersionInterceptor', () {
@@ -422,8 +420,8 @@ void main() {
 
       expect(t.adapter.requests[0].headers['x-country-code'], 'UA');
       expect(t.adapter.requests[1].headers['x-country-code'], 'PL');
-      expect(t.adapter.requests[2].headers.containsKey('x-country-code'),
-          false);
+      expect(
+          t.adapter.requests[2].headers.containsKey('x-country-code'), false);
     });
 
     test('overwrites caller header when a code is available', () async {

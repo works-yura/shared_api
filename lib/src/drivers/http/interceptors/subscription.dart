@@ -11,8 +11,10 @@ class SubscriptionInterceptor extends Interceptor {
   void onError(DioException err, ErrorInterceptorHandler handler) {
     if (err.response?.statusCode == 402) {
       final data = err.response?.data;
-      if (data is Map<String, dynamic>) {
-        final code = data['code'] ?? data['metadata']?['code'];
+      if (data is Map) {
+        final metadata = data['metadata'];
+        final code =
+            data['code'] ?? (metadata is Map ? metadata['code'] : null);
         if (code == 'SUBSCRIPTION_REQUIRED') {
           onSubscriptionRequired();
         }
