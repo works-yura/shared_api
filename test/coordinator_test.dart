@@ -128,6 +128,7 @@ class _Harness {
     RetryConfig retry =
         const RetryConfig(maxAttempts: 2, initialDelay: Duration(seconds: 1)),
     bool withStreaming = true,
+    String Function(AuthorizedState state)? userIdResolver,
   })  : session = session ?? InMemoryHttpSession<TokenState>(),
         client = _FakeClient(script ?? (_) => _ok()),
         streaming = withStreaming ? _FakeStreaming() : null {
@@ -138,6 +139,7 @@ class _Harness {
       refreshRequestFactory: (t) => AuthRefreshRequest(refreshToken: t),
       streaming: streaming,
       cache: cache,
+      userIdResolver: userIdResolver,
       observers: [observer],
       retry: retry,
     );
@@ -272,6 +274,45 @@ void main() {
         h.session.update(_auth('B'));
         async.flushMicrotasks();
         expect(h.cache.length, 0);
+        h.dispose();
+      });
+    });
+
+    AuthorizedState opaque(String access, String refresh) =>
+        TokenState.authorized(
+          access: access,
+          refresh: refresh,
+          expiresIn: 3600,
+        ) as AuthorizedState;
+
+    test('opaque tokens: switching accounts clears the cache', () {
+      fakeAsync((async) {
+        final h = _Harness();
+        h.setup();
+        h.session.update(opaque('a1', 'ra'));
+        async.flushMicrotasks();
+        h.seedCache();
+        async.flushMicrotasks();
+
+        h.session.update(opaque('b1', 'rb'));
+        async.flushMicrotasks();
+        expect(h.cache.length, 0);
+        h.dispose();
+      });
+    });
+
+    test('userIdResolver keeps the cache across token rotation', () {
+      fakeAsync((async) {
+        final h = _Harness(userIdResolver: (_) => 'user-1');
+        h.setup();
+        h.session.update(opaque('a1', 'ra'));
+        async.flushMicrotasks();
+        h.seedCache();
+        async.flushMicrotasks();
+
+        h.session.update(opaque('a2', 'ra2'));
+        async.flushMicrotasks();
+        expect(h.cache.length, 1);
         h.dispose();
       });
     });

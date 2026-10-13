@@ -13,6 +13,9 @@ class ApiCoordinator extends Coordinator<TokenState> {
   /// responses are never served to another.
   final HttpCache? _cache;
 
+  /// Resolves who owns the cached responses for an authorized session.
+  final String Function(AuthorizedState state) _userIdResolver;
+
   /// User the cached responses belong to. `_unknownOwner` until the first
   /// session event, so the initial restore doesn't wipe the cache.
   Object? _cacheOwner = _unknownOwner;
@@ -26,11 +29,13 @@ class ApiCoordinator extends Coordinator<TokenState> {
     super.streaming,
     MessagingService? messagingService,
     HttpCache? cache,
+    String Function(AuthorizedState state)? userIdResolver,
     super.observers,
     super.retry,
   })  : _client = client,
         _messagingService = messagingService,
         _cache = cache,
+        _userIdResolver = userIdResolver ?? _defaultUserId,
         _refreshRequestFactory = refreshRequestFactory;
 
   @override
@@ -84,8 +89,17 @@ class ApiCoordinator extends Coordinator<TokenState> {
     }
   }
 
+  /// JWT `sub` when available. Opaque tokens carry no identity, so fall back
+  /// to the refresh token: the cache is then cleared on every token rotation,
+  /// which is safe but loses cached data. Pass [userIdResolver] (e.g. the id
+  /// from your profile/sign-in response) to keep the cache across refreshes.
+  static String _defaultUserId(AuthorizedState state) {
+    final userId = state.userId;
+    return userId.isNotEmpty ? userId : 'refresh:${state.refresh}';
+  }
+
   void _syncCacheOwner(TokenState? state) {
-    final owner = state is AuthorizedState ? state.userId : null;
+    final owner = state is AuthorizedState ? _userIdResolver(state) : null;
     final previous = _cacheOwner;
     _cacheOwner = owner;
     if (identical(previous, _unknownOwner) || previous == owner) return;
