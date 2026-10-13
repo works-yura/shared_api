@@ -16,8 +16,6 @@ Future<void> main() async {
     cache: cache, // CacheInterceptor is installed automatically
     credentials: const ApiCredentials(
       host: 'api.example.com',
-      clientID: '',
-      clientSecret: '',
     ),
   );
 

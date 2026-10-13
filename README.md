@@ -24,8 +24,6 @@ final client = ApiClient<TokenState, ApiCredentials>(
   cache: cache, // CacheInterceptor is installed automatically
   credentials: const ApiCredentials(
     host: 'api.example.com',
-    clientID: '',
-    clientSecret: '',
   ),
 );
 
