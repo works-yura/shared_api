@@ -1,7 +1,7 @@
 export 'package:shared_api/src/drivers/http/interceptors/bearer_token.dart';
 export 'package:shared_api/src/drivers/http/interceptors/refresh_token.dart';
 export 'package:shared_api/src/drivers/http/interceptors/cache.dart';
-export 'package:shared_api/src/drivers/http/interceptors/gzip.dart';
+export 'package:shared_api/src/drivers/http/interceptors/compression.dart';
 export 'package:shared_api/src/drivers/http/interceptors/retry.dart';
 export 'package:shared_api/src/drivers/http/interceptors/circuit_breaker.dart';
 export 'package:shared_api/src/drivers/http/interceptors/language.dart';

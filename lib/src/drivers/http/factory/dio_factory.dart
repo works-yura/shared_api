@@ -70,9 +70,9 @@ class DioFactory {
                       () => jsonDecode(text)))); // Background on native
 
     // 4. Request compression
-    if (config.useGzip) {
-      dio.interceptors
-          .add(GzipInterceptor(compressionThreshold: config.gzipThreshold));
+    final compression = config.compression;
+    if (compression != null) {
+      dio.interceptors.add(CompressionInterceptor.fromSettings(compression));
     }
 
     return dio;

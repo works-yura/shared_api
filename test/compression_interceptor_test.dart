@@ -35,11 +35,11 @@ class _Adapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
-({Dio dio, _Adapter adapter}) _setup([GzipInterceptor? interceptor]) {
+({Dio dio, _Adapter adapter}) _setup([CompressionInterceptor? interceptor]) {
   final dio = Dio(BaseOptions(baseUrl: 'https://api.test'));
   final adapter = _Adapter();
   dio.httpClientAdapter = adapter;
-  dio.interceptors.add(interceptor ?? GzipInterceptor());
+  dio.interceptors.add(interceptor ?? _gzip());
   return (dio: dio, adapter: adapter);
 }
 
@@ -48,9 +48,25 @@ Map<String, dynamic> _bigMap(int bytes) => {'payload': 'x' * bytes};
 
 String _gunzipString(List<int> bytes) => utf8.decode(gzip.decode(bytes));
 
+CompressionInterceptor _gzip({int threshold = 1024}) => CompressionInterceptor(
+    compressor: const GzipCompressor(), threshold: threshold);
+
+/// Custom format: proves new encodings plug in without touching the package.
+class _ReverseCompressor extends RequestCompressor {
+  const _ReverseCompressor();
+
+  @override
+  String get encoding => 'x-reverse';
+
+  @override
+  List<int> compress(List<int> bytes) =>
+      bytes.reversed.toList().sublist(0, bytes.length ~/ 2);
+}
+
 void main() {
   test('default threshold is 1024 bytes', () {
-    expect(GzipInterceptor().compressionThreshold, 1024);
+    expect(_gzip().threshold, 1024);
+    expect(const RequestCompression(GzipCompressor()).threshold, 1024);
   });
 
   test('large Map body is gzipped, headers set, decodes back to JSON',
@@ -62,7 +78,8 @@ void main() {
 
     final req = t.adapter.requests.single;
     expect(req.headers['content-encoding'], 'gzip');
-    expect(req.headers['accept-encoding'], 'gzip');
+    // Response negotiation is not this interceptor's job.
+    expect(req.headers.containsKey('accept-encoding'), false);
     expect(req.data, isA<Uint8List>());
 
     final wire = t.adapter.bodies.single;
@@ -118,7 +135,7 @@ void main() {
   test(
       'threshold is strict: exactly threshold bytes is not compressed, '
       'one more byte is', () async {
-    final t = _setup(GzipInterceptor(compressionThreshold: 100));
+    final t = _setup(_gzip(threshold: 100));
 
     await t.dio.post<dynamic>('/a',
         data: 'a' * 100, options: Options(contentType: 'text/plain'));
@@ -133,7 +150,7 @@ void main() {
   });
 
   test('threshold measured in utf8 bytes, not characters', () async {
-    final t = _setup(GzipInterceptor(compressionThreshold: 100));
+    final t = _setup(_gzip(threshold: 100));
     // 60 chars, 120 utf8 bytes.
     final body = 'ї' * 60;
 
@@ -145,7 +162,7 @@ void main() {
   });
 
   test('custom threshold param is honoured', () async {
-    final t = _setup(GzipInterceptor(compressionThreshold: 10000));
+    final t = _setup(_gzip(threshold: 10000));
 
     await t.dio.post<dynamic>('/x', data: _bigMap(4000));
 
@@ -165,7 +182,7 @@ void main() {
   });
 
   test('FormData body is not compressed', () async {
-    final t = _setup(GzipInterceptor(compressionThreshold: 10));
+    final t = _setup(_gzip(threshold: 10));
     final form = FormData.fromMap({'field': 'x' * 5000});
 
     await t.dio.post<dynamic>('/form', data: form);
@@ -176,7 +193,7 @@ void main() {
   });
 
   test('other object types (e.g. int) are passed through unchanged', () async {
-    final t = _setup(GzipInterceptor(compressionThreshold: 0));
+    final t = _setup(_gzip(threshold: 0));
 
     await t.dio.post<dynamic>('/n', data: 123456789);
 
@@ -187,7 +204,7 @@ void main() {
 
   test('non-JSON-encodable Map falls back to original data (fail-safe)',
       () async {
-    final t = _setup(GzipInterceptor(compressionThreshold: 0));
+    final t = _setup(_gzip(threshold: 0));
     final obj = Object();
     final body = {'o': obj};
 
@@ -198,25 +215,83 @@ void main() {
     expect(t.adapter.requests, isEmpty);
   });
 
-  test('HttpConfig defaults: useGzip=false, gzipThreshold=1024', () {
-    const config = HttpConfig();
-    expect(config.useGzip, false);
-    expect(config.gzipThreshold, 1024);
+  test('HttpConfig: compression disabled by default', () {
+    expect(const HttpConfig().compression, isNull);
   });
 
-  test('DioFactory installs GzipInterceptor per HttpConfig.useGzip/threshold',
-      () {
+  test('DioFactory installs CompressionInterceptor from HttpConfig', () {
     final dio = DioFactory(
-      config: const HttpConfig(useGzip: true, gzipThreshold: 2048),
+      config: const HttpConfig(
+        compression: RequestCompression(DeflateCompressor(), threshold: 2048),
+      ),
     ).create();
 
-    final gz = dio.interceptors.whereType<GzipInterceptor>();
-    expect(gz, hasLength(1));
-    expect(gz.single.compressionThreshold, 2048);
+    final installed = dio.interceptors.whereType<CompressionInterceptor>();
+    expect(installed, hasLength(1));
+    expect(installed.single.compressor, isA<DeflateCompressor>());
+    expect(installed.single.threshold, 2048);
   });
 
-  test('DioFactory does not install GzipInterceptor by default', () {
+  test('DioFactory does not install CompressionInterceptor by default', () {
     final dio = DioFactory(config: const HttpConfig()).create();
-    expect(dio.interceptors.whereType<GzipInterceptor>(), isEmpty);
+    expect(dio.interceptors.whereType<CompressionInterceptor>(), isEmpty);
+  });
+
+  test('deflate compressor sets deflate encoding and decodes with zlib',
+      () async {
+    final t =
+        _setup(CompressionInterceptor(compressor: const DeflateCompressor()));
+    final body = _bigMap(4000);
+
+    await t.dio.post<dynamic>('/upload', data: body);
+
+    expect(t.adapter.requests.single.headers['content-encoding'], 'deflate');
+    expect(jsonDecode(utf8.decode(zlib.decode(t.adapter.bodies.single))), body);
+  });
+
+  test('custom compressor plugs in without package changes', () async {
+    final t =
+        _setup(CompressionInterceptor(compressor: const _ReverseCompressor()));
+
+    await t.dio.post<dynamic>('/upload', data: 'x' * 4000);
+
+    expect(t.adapter.requests.single.headers['content-encoding'], 'x-reverse');
+    expect(t.adapter.bodies.single, hasLength(2000));
+  });
+
+  test('pre-encoded body (Content-Encoding set by caller) is not re-compressed',
+      () async {
+    final t = _setup(_gzip(threshold: 0));
+    final pre = Uint8List.fromList(gzip.encode(utf8.encode('x' * 4000)));
+
+    await t.dio.post<dynamic>('/upload',
+        data: pre, options: Options(headers: {'Content-Encoding': 'gzip'}));
+
+    expect(t.adapter.bodies.single, pre);
+  });
+
+  test('form-urlencoded Map is not JSON-encoded or compressed', () async {
+    final t = _setup(_gzip(threshold: 0));
+
+    await t.dio.post<dynamic>('/form',
+        data: {'field': 'x' * 4000},
+        options: Options(contentType: Headers.formUrlEncodedContentType));
+
+    final req = t.adapter.requests.single;
+    expect(req.headers.containsKey('content-encoding'), false);
+    expect(utf8.decode(t.adapter.bodies.single), startsWith('field=xxx'));
+  });
+
+  test('body that does not shrink is sent uncompressed', () async {
+    final t = _setup(_gzip(threshold: 0));
+    // Random-looking bytes don't compress; gzip adds header overhead.
+    final noise =
+        Uint8List.fromList(List.generate(64, (i) => (i * 97 + 13) % 256));
+
+    await t.dio.post<dynamic>('/bin', data: noise);
+
+    expect(t.adapter.requests.single.headers.containsKey('content-encoding'),
+        false);
+    expect(t.adapter.bodies.single, noise);
   });
 }

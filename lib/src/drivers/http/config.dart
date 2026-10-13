@@ -1,3 +1,5 @@
+import 'package:shared_api/src/core/http/compression.dart';
+
 class HttpConfig {
   final Duration connectTimeout;
   final Duration sendTimeout;
@@ -6,10 +8,10 @@ class HttpConfig {
   final List<int>? certificates;
   final Map<String, String> services;
 
-  /// Gzip-compress request bodies larger than [gzipThreshold] bytes.
-  /// Off by default: the backend must accept `Content-Encoding: gzip`.
-  final bool useGzip;
-  final int gzipThreshold;
+  /// Request body compression, e.g.
+  /// `RequestCompression(GzipCompressor(), threshold: 1024)`.
+  /// Null (default) disables it: the backend must accept the encoding.
+  final RequestCompression? compression;
 
   const HttpConfig({
     this.connectTimeout = const Duration(seconds: 30),
@@ -18,8 +20,7 @@ class HttpConfig {
     this.headers,
     this.certificates,
     this.services = const {},
-    this.useGzip = false,
-    this.gzipThreshold = 1024,
+    this.compression,
   });
 
   factory HttpConfig.initial() {

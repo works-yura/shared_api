@@ -99,6 +99,34 @@ HttpOptions onRequest(ApiCredentials credentials) =>
 - Use `staleWhileRevalidate` only for non-critical read-only data (catalogs, lists),
   never for balances, permissions or anything the user just changed.
 
+## Request compression
+
+Off by default. The backend must accept the chosen `Content-Encoding`.
+
+```dart
+const config = HttpConfig(
+  compression: RequestCompression(GzipCompressor(), threshold: 1024),
+);
+```
+
+Built in: `GzipCompressor`, `DeflateCompressor`. Add any other format by
+implementing `RequestCompressor`:
+
+```dart
+class ZstdCompressor extends RequestCompressor {
+  const ZstdCompressor();
+
+  @override
+  String get encoding => 'zstd';
+
+  @override
+  List<int> compress(List<int> bytes) => zstd.encode(bytes);
+}
+```
+
+Bodies are left as is when already encoded (`Content-Encoding` set), not JSON
+(form-urlencoded, `FormData`), not smaller after compression, or on Web.
+
 ## Tree
 
 ```bash

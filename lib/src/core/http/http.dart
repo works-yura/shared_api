@@ -8,3 +8,4 @@ export 'requests.dart';
 export 'response.dart';
 export 'mixins.dart';
 export 'credentials.dart';
+export 'compression.dart';
