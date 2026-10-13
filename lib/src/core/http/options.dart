@@ -57,6 +57,8 @@ class HttpOptions {
     Map<String, dynamic>? headers,
     HttpData? data,
     HttpCachePolicy? cachePolicy,
+    HttpCancelToken? cancelToken,
+    Map<String, dynamic>? extra,
     final void Function(int progress, int total)? onReceive,
     final void Function(int progress, int total)? onSend,
   }) {
@@ -67,6 +69,8 @@ class HttpOptions {
       headers: headers ?? this.headers,
       data: data ?? this.data,
       cachePolicy: cachePolicy ?? this.cachePolicy,
+      cancelToken: cancelToken ?? this.cancelToken,
+      extra: extra ?? this.extra,
       onReceive: onReceive ?? this.onReceive,
       onSend: onSend ?? this.onSend,
     );
