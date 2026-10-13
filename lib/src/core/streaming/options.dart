@@ -1,3 +1,5 @@
+import 'protocol.dart';
+
 /// Options for a streaming request.
 class StreamingOptions {
   final String action;
@@ -15,10 +17,8 @@ class StreamingOptions {
     this.correlationId,
   });
 
-  Map<String, dynamic> toJson() => {
-        'action': action,
-        'payload': data,
-        if (correlationId != null) 'correlation_id': correlationId,
-        ...extras,
-      };
+  /// Outgoing envelope; field names come from [protocol].
+  Map<String, dynamic> toJson(
+          [StreamingProtocol protocol = StreamingProtocol.standard]) =>
+      protocol.envelope(this);
 }

@@ -1,6 +1,7 @@
 export 'client.dart';
 export 'interceptor.dart';
 export 'options.dart';
+export 'protocol.dart';
 export 'models/request.dart';
 export 'models/response.dart';
 export 'events/event.dart';

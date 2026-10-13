@@ -9,17 +9,21 @@ class MessagingService {
   final Streaming _client;
   final Outbox _outbox;
 
+  /// Wire names of the envelope, message id and acks.
+  final StreamingProtocol protocol;
+
   StreamSubscription? _ackSubscription;
 
   MessagingService({
     required Streaming streaming,
     required Outbox outbox,
+    this.protocol = StreamingProtocol.standard,
   })  : _client = streaming,
         _outbox = outbox;
 
   /// Initializes the ACK listener.
   void init() {
-    _ackSubscription = _client.on(AckEvent()).listen(_handleAck);
+    _ackSubscription = _client.on(AckEvent(protocol)).listen(_handleAck);
   }
 
   void _handleAck(AckResponse ack) {
@@ -33,8 +37,9 @@ class MessagingService {
     final messageId = DeviceId.generate(16);
     final options = request.onRequest();
 
-    // Merge msg_id into extras
-    final payloadMap = options.toJson()..['msg_id'] = messageId;
+    // Merge the message id into the envelope
+    final payloadMap = options.toJson(protocol)
+      ..[protocol.messageIdField] = messageId;
 
     dynamic finalPayload = _client.prepare(payloadMap);
 

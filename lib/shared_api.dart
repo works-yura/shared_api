@@ -20,6 +20,7 @@ export 'package:shared_api/src/drivers/http/compression/compressors.dart';
 // Streaming
 export 'package:shared_api/src/drivers/streaming/streaming.dart';
 export 'package:shared_api/src/drivers/streaming/socket_io_streaming.dart';
+export 'package:shared_api/src/drivers/streaming/access_token.dart';
 export 'package:shared_api/src/drivers/streaming/messaging/messaging_service.dart';
 export 'package:shared_api/src/drivers/streaming/interceptors/interceptors.dart';
 export 'package:shared_api/src/drivers/streaming/persistence/persistent_outbox.dart';
