@@ -29,14 +29,24 @@ class _Adapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
-const _resetTimeout = Duration(milliseconds: 40);
+const _resetTimeout = Duration(seconds: 30);
 
-({Dio dio, _Adapter adapter}) _setup({
+/// Fake clock: tests advance time explicitly instead of sleeping.
+class _Clock {
+  DateTime value = DateTime(2026);
+  DateTime call() => value;
+  void advance(Duration d) => value = value.add(d);
+}
+
+({Dio dio, _Adapter adapter, _Clock clock}) _setup({
   int failureThreshold = 3,
   int successThreshold = 1,
+  bool Function(DioException err)? isFailure,
+  String Function(RequestOptions options)? keyOf,
 }) {
   final dio = Dio(BaseOptions(baseUrl: 'https://api.test'));
   final adapter = _Adapter();
+  final clock = _Clock();
   dio.httpClientAdapter = adapter;
   dio.interceptors.add(CircuitBreakerInterceptor(
     config: CircuitBreakerConfig(
@@ -44,13 +54,16 @@ const _resetTimeout = Duration(milliseconds: 40);
       successThreshold: successThreshold,
       resetTimeout: _resetTimeout,
     ),
+    isFailure: isFailure,
+    keyOf: keyOf,
+    now: clock.call,
   ));
-  return (dio: dio, adapter: adapter);
+  return (dio: dio, adapter: adapter, clock: clock);
 }
 
-Future<int?> _status(Dio dio) async {
+Future<int?> _status(Dio dio, [String url = '/x']) async {
   try {
-    final r = await dio.get<dynamic>('/x');
+    final r = await dio.get<dynamic>(url);
     return r.statusCode;
   } on DioException catch (e) {
     return e.response?.statusCode;
@@ -58,9 +71,9 @@ Future<int?> _status(Dio dio) async {
 }
 
 /// Fires a request and returns the DioException (or null on success).
-Future<DioException?> _err(Dio dio) async {
+Future<DioException?> _err(Dio dio, [String url = '/x']) async {
   try {
-    await dio.get<dynamic>('/x');
+    await dio.get<dynamic>(url);
     return null;
   } on DioException catch (e) {
     return e;
@@ -71,15 +84,16 @@ Matcher get _isOpenRejection => isA<DioException>()
     .having((e) => e.type, 'type', DioExceptionType.cancel)
     .having((e) => e.error, 'error', isA<CircuitBreakerOpenException>());
 
-Future<void> _failN(Dio dio, _Adapter a, int n, {int status = 500}) async {
+Future<void> _failN(Dio dio, _Adapter a, int n,
+    {int status = 500, String url = '/x'}) async {
   a.next = (_) => status;
   for (var i = 0; i < n; i++) {
-    await _status(dio);
+    await _status(dio, url);
   }
 }
 
-Future<void> _waitReset() =>
-    Future<void>.delayed(_resetTimeout + const Duration(milliseconds: 20));
+void _waitReset(_Clock clock) =>
+    clock.advance(_resetTimeout + const Duration(milliseconds: 1));
 
 void main() {
   group('closed', () {
@@ -205,7 +219,7 @@ void main() {
     test('after reset timeout lets exactly one test request through', () async {
       final t = _setup(failureThreshold: 2);
       await _failN(t.dio, t.adapter, 2);
-      await _waitReset();
+      _waitReset(t.clock);
 
       // Hold the test request open so concurrent ones see half-open.
       final gate = Completer<void>();
@@ -228,7 +242,7 @@ void main() {
     test('still open before reset timeout elapses', () async {
       final t = _setup(failureThreshold: 2);
       await _failN(t.dio, t.adapter, 2);
-      await Future<void>.delayed(const Duration(milliseconds: 5));
+      t.clock.advance(const Duration(seconds: 29));
       expect(await _err(t.dio), _isOpenRejection);
       expect(t.adapter.calls, 2);
     });
@@ -236,7 +250,7 @@ void main() {
     test('success closes the circuit (successThreshold = 1)', () async {
       final t = _setup(failureThreshold: 2, successThreshold: 1);
       await _failN(t.dio, t.adapter, 2);
-      await _waitReset();
+      _waitReset(t.clock);
 
       t.adapter.next = (_) => 200;
       expect(await _err(t.dio), isNull);
@@ -251,7 +265,7 @@ void main() {
         () async {
       final t = _setup(failureThreshold: 2, successThreshold: 1);
       await _failN(t.dio, t.adapter, 2);
-      await _waitReset();
+      _waitReset(t.clock);
       t.adapter.next = (_) => 200;
       await _status(t.dio);
 
@@ -263,7 +277,7 @@ void main() {
     test('failure re-opens immediately and restarts the timeout', () async {
       final t = _setup(failureThreshold: 3);
       await _failN(t.dio, t.adapter, 3);
-      await _waitReset();
+      _waitReset(t.clock);
 
       await _failN(t.dio, t.adapter, 1); // the test request fails
       expect(t.adapter.calls, 4);
@@ -272,7 +286,7 @@ void main() {
       expect(await _err(t.dio), _isOpenRejection);
       expect(t.adapter.calls, 4);
 
-      await _waitReset();
+      _waitReset(t.clock);
       expect(await _err(t.dio), isNull);
       expect(t.adapter.calls, 5);
     });
@@ -282,7 +296,7 @@ void main() {
       () async {
         final t = _setup(failureThreshold: 2, successThreshold: 2);
         await _failN(t.dio, t.adapter, 2);
-        await _waitReset();
+        _waitReset(t.clock);
 
         t.adapter.next = (_) => 200;
         expect(await _err(t.dio), isNull); // 1st test success
@@ -297,13 +311,64 @@ void main() {
       () async {
         final t = _setup(failureThreshold: 2);
         await _failN(t.dio, t.adapter, 2);
-        await _waitReset();
+        _waitReset(t.clock);
 
         await _failN(t.dio, t.adapter, 1, status: 404); // test request
         t.adapter.next = (_) => 200;
         expect(await _err(t.dio), isNull);
       },
     );
+  });
+
+  group('isFailure', () {
+    test('custom predicate decides what counts', () async {
+      // Treat 429 as a failure, and 5xx as not.
+      final t = _setup(
+        failureThreshold: 2,
+        isFailure: (e) => e.response?.statusCode == 429,
+      );
+      await _failN(t.dio, t.adapter, 3, status: 500);
+      t.adapter.next = (_) => 200;
+      expect(await _err(t.dio), isNull);
+
+      await _failN(t.dio, t.adapter, 2, status: 429);
+      expect(await _err(t.dio), _isOpenRejection);
+    });
+
+    test('defaultIsFailure can be composed', () async {
+      final t = _setup(
+        failureThreshold: 2,
+        isFailure: (e) =>
+            CircuitBreakerInterceptor.defaultIsFailure(e) ||
+            e.response?.statusCode == 429,
+      );
+      await _failN(t.dio, t.adapter, 1, status: 500);
+      await _failN(t.dio, t.adapter, 1, status: 429);
+      expect(await _err(t.dio), _isOpenRejection);
+    });
+  });
+
+  group('keyOf', () {
+    test('default: one global circuit for all hosts', () async {
+      final t = _setup(failureThreshold: 2);
+      await _failN(t.dio, t.adapter, 2, url: 'https://a.test/x');
+      t.adapter.next = (_) => 200;
+      expect(await _err(t.dio, 'https://b.test/x'), _isOpenRejection);
+    });
+
+    test('per-host circuits are independent', () async {
+      final t = _setup(failureThreshold: 2, keyOf: (o) => o.uri.host);
+      await _failN(t.dio, t.adapter, 2, url: 'https://a.test/x');
+      t.adapter.next = (_) => 200;
+
+      expect(await _err(t.dio, 'https://a.test/x'), _isOpenRejection);
+      expect(await _err(t.dio, 'https://b.test/x'), isNull);
+
+      // Half-open probe on a.test does not block b.test.
+      _waitReset(t.clock);
+      expect(await _err(t.dio, 'https://a.test/x'), isNull);
+      expect(await _err(t.dio, 'https://b.test/x'), isNull);
+    });
   });
 }
 
