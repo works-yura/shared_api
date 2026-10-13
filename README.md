@@ -91,6 +91,7 @@ HttpOptions onRequest(ApiCredentials credentials) =>
 
 - TTL comes from `Cache-Control: max-age` / `Expires`, else `CacheInterceptor.defaultTtl` (5 min).
   `no-store` is never stored; `no-cache` is stored but always revalidated.
+- The response `Vary` header is honoured: entries are stored per value of the varied request headers (`Vary: *` is never cached).
 - Responses served from cache carry `x-from-cache: true`; stale ones also `x-cache-stale: true`.
 - `HttpCache.get` returns expired entries; implementations own eviction.
   `MapHttpCache` evicts least recently used past `maxEntries` and entries expired longer than `maxStale` (1 day).
@@ -137,6 +138,7 @@ Defaults match the original backend; every contract is a constructor parameter.
 | 401 / session expired | `RefreshTokenInterceptor` | `isUnauthorized`, `isSessionExpired`, `isRefreshRejected`, `authHeaderName`, `authHeaderValue`, `isSecured` |
 | Refresh rejected | `ApiCoordinator` | `isRefreshRejected` (keep in sync with the interceptor) |
 | Auth header | `BearerTokenInterceptor` | `headerName`, `headerValue` |
+| Refresh timing | `ApiCoordinator` | `refreshDelay` (default: 10% of lifetime, clamped 30s–5m) |
 | Cache owner | `ApiCoordinator` | `userIdResolver` (required for non-JWT tokens to keep cache across refresh) |
 | Cache key | `ApiClient` | `cacheInterceptor: (c) => CacheInterceptor(cache: c, varyHeaders: [...])` |
 | Retry | `RetryInterceptor` | `retryIf` (compose with `RetryInterceptor.defaultRetryIf`) |
