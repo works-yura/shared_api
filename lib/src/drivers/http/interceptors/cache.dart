@@ -69,7 +69,7 @@ class CacheInterceptor extends Interceptor {
       return handler.next(options);
     }
 
-    final key = _getCacheKey(options);
+    final key = await _resolveKey(options);
     final entry = await _read(key);
 
     if (entry == null) {
@@ -116,7 +116,7 @@ class CacheInterceptor extends Interceptor {
       return handler.next(response);
     }
 
-    final key = _getCacheKey(options);
+    final key = await _resolveKey(options);
 
     if (response.statusCode == 304) {
       final entry = await _read(key);
@@ -151,7 +151,9 @@ class CacheInterceptor extends Interceptor {
 
     if (response.statusCode == 200) {
       final directives = _parseDirectives(response.headers);
-      if (directives.noStore) {
+      final varyNames = _responseVary(response.headers);
+      if (directives.noStore || varyNames == null) {
+        // no-store, or `Vary: *` (never a cache hit): do not keep anything.
         await _remove(key);
       } else {
         final eTag = response.headers.value('etag');
@@ -159,8 +161,12 @@ class CacheInterceptor extends Interceptor {
         final ttl = directives.ttl ?? defaultTtl;
         // A zero TTL is still worth storing when it can be revalidated.
         if (ttl > Duration.zero || eTag != null || lastModified != null) {
+          // The response may vary on request headers beyond the key's own:
+          // remember which ones and store this entry under that variant.
+          final base = _getCacheKey(options);
+          await _storeVaryIndex(base, varyNames);
           await _write(
-            key,
+            _variantKey(base, varyNames, options),
             response.data,
             ttl: ttl,
             eTag: eTag,
@@ -251,6 +257,54 @@ class CacheInterceptor extends Interceptor {
     try {
       await cache.remove(key);
     } catch (_) {}
+  }
+
+  /// Storage key of the vary index for [base]: which request headers the
+  /// cached responses vary on (from the response `Vary` header).
+  static String _varyIndexKey(String base) => '$base#vary';
+
+  /// Key of the cached variant for [options]: [_getCacheKey] plus the values
+  /// of the request headers the server said the response varies on.
+  Future<String> _resolveKey(RequestOptions options) async {
+    final base = _getCacheKey(options);
+    final index = await _read(_varyIndexKey(base));
+    final data = index?.data;
+    final names = data is List ? data.whereType<String>().toList() : <String>[];
+    return _variantKey(base, names, options);
+  }
+
+  static String _variantKey(
+      String base, List<String> names, RequestOptions options) {
+    if (names.isEmpty) return base;
+    final values = names.map((n) => '&vary:$n=${options.headers[n] ?? ''}');
+    return '$base${values.join()}';
+  }
+
+  Future<void> _storeVaryIndex(String base, List<String> names) async {
+    if (names.isEmpty) return _remove(_varyIndexKey(base));
+    await _write(
+      _varyIndexKey(base),
+      names,
+      ttl: const Duration(days: 365),
+    );
+  }
+
+  /// Request header names the response varies on, lower-cased and without the
+  /// ones the cache key already includes. Null means `Vary: *`: the response
+  /// can never be served from cache.
+  List<String>? _responseVary(Headers headers) {
+    final values = headers[HttpHeaders.varyHeader];
+    if (values == null) return const [];
+    final names = values
+        .expand((v) => v.split(','))
+        .map((n) => n.trim().toLowerCase())
+        .where((n) => n.isNotEmpty)
+        .toSet();
+    if (names.contains('*')) return null;
+    final inKey = cacheKeyBuilder == null
+        ? varyHeaders.map((h) => h.toLowerCase()).toSet()
+        : const <String>{};
+    return (names.difference(inKey).toList()..sort());
   }
 
   String _getCacheKey(RequestOptions options) =>

@@ -199,6 +199,81 @@ void main() {
     expect(res.data, {'ok': true});
   });
 
+  group('response Vary header', () {
+    ResponseBody tenantBody(int call, RequestOptions options,
+            {String vary = 'X-Tenant'}) =>
+        _json('{"tenant":"${options.headers['x-tenant']}","call":$call}',
+            headers: {'vary': vary, 'cache-control': 'max-age=60'});
+
+    test('responses are cached per value of the varied request header',
+        () async {
+      final t = _setup((call, options) => tenantBody(call, options));
+      final use = _policy(HttpCachePolicy.useCache);
+      Options withTenant(String tenant) =>
+          use.copyWith(headers: {'x-tenant': tenant});
+
+      final a1 = await t.dio.get<dynamic>('/items', options: withTenant('a'));
+      final b1 = await t.dio.get<dynamic>('/items', options: withTenant('b'));
+      final a2 = await t.dio.get<dynamic>('/items', options: withTenant('a'));
+
+      expect(a1.data['tenant'], 'a');
+      expect(b1.data['tenant'], 'b');
+      expect(a2.data['tenant'], 'a');
+      expect(a2.headers.value('x-from-cache'), 'true');
+      expect(t.adapter.requests, hasLength(2), reason: 'a, b; second a cached');
+    });
+
+    test('Vary: * is never served from cache', () async {
+      final t = _setup((call, options) => tenantBody(call, options, vary: '*'));
+      final use = _policy(HttpCachePolicy.useCache);
+
+      await t.dio.get<dynamic>('/items', options: use);
+      await t.dio.get<dynamic>('/items', options: use);
+
+      expect(t.adapter.requests, hasLength(2));
+      expect(t.cache.length, 0);
+    });
+
+    test('headers already part of the key do not create a vary index',
+        () async {
+      final t = _setup((call, options) =>
+          tenantBody(call, options, vary: 'Accept-Language'));
+      final use = _policy(HttpCachePolicy.useCache);
+
+      await t.dio.get<dynamic>('/items', options: use);
+      await t.dio.get<dynamic>('/items', options: use);
+
+      expect(t.adapter.requests, hasLength(1));
+      expect(t.cache.length, 1, reason: 'only the entry, no #vary index');
+    });
+
+    test('dropping Vary later removes the index', () async {
+      var vary = 'X-Tenant';
+      final t =
+          _setup((call, options) => tenantBody(call, options, vary: vary));
+      final use = _policy(HttpCachePolicy.refresh);
+      Options withTenant(String tenant) => Options(
+            extra: use.extra,
+            headers: {'x-tenant': tenant},
+          );
+
+      await t.dio.get<dynamic>('/items', options: withTenant('a'));
+      expect(t.cache.length, 2, reason: 'entry + #vary index');
+
+      vary = '';
+      await t.dio.get<dynamic>('/items', options: withTenant('a'));
+
+      // Without Vary the entry is shared: another tenant now hits it.
+      final shared = await t.dio.get<dynamic>('/items',
+          options: Options(
+            extra: _policy(HttpCachePolicy.useCache).extra,
+            headers: {'x-tenant': 'b'},
+          ));
+      expect(shared.headers.value('x-from-cache'), 'true');
+      expect(shared.data['tenant'], 'a');
+    });
+  });
+
   test('ApiClient accepts a custom CacheInterceptor', () {
     final dio = Dio();
     final cache = MapHttpCache();
