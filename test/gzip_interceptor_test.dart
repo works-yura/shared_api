@@ -97,8 +97,7 @@ void main() {
     final body = Uint8List.fromList(List.generate(5000, (i) => i % 256));
 
     await t.dio.post<dynamic>('/bin',
-        data: body,
-        options: Options(contentType: 'application/octet-stream'));
+        data: body, options: Options(contentType: 'application/octet-stream'));
 
     expect(t.adapter.requests.single.headers['content-encoding'], 'gzip');
     expect(gzip.decode(t.adapter.bodies.single), body);
@@ -116,7 +115,8 @@ void main() {
     expect(jsonDecode(utf8.decode(t.adapter.bodies.single)), body);
   });
 
-  test('threshold is strict: exactly threshold bytes is not compressed, '
+  test(
+      'threshold is strict: exactly threshold bytes is not compressed, '
       'one more byte is', () async {
     final t = _setup(GzipInterceptor(compressionThreshold: 100));
 
@@ -125,8 +125,8 @@ void main() {
     await t.dio.post<dynamic>('/b',
         data: 'a' * 101, options: Options(contentType: 'text/plain'));
 
-    expect(t.adapter.requests[0].headers.containsKey('content-encoding'),
-        false);
+    expect(
+        t.adapter.requests[0].headers.containsKey('content-encoding'), false);
     expect(utf8.decode(t.adapter.bodies[0]), 'a' * 100);
     expect(t.adapter.requests[1].headers['content-encoding'], 'gzip');
     expect(_gunzipString(t.adapter.bodies[1]), 'a' * 101);
@@ -198,9 +198,9 @@ void main() {
     expect(t.adapter.requests, isEmpty);
   });
 
-  test('HttpConfig defaults: useGzip=true, gzipThreshold=1024', () {
+  test('HttpConfig defaults: useGzip=false, gzipThreshold=1024', () {
     const config = HttpConfig();
-    expect(config.useGzip, true);
+    expect(config.useGzip, false);
     expect(config.gzipThreshold, 1024);
   });
 
@@ -213,9 +213,10 @@ void main() {
     final gz = dio.interceptors.whereType<GzipInterceptor>();
     expect(gz, hasLength(1));
     expect(gz.single.compressionThreshold, 2048);
-  },
-      skip: 'BUG: lib/src/drivers/http/config.dart:8-9 — HttpConfig.useGzip '
-          'and gzipThreshold are never read anywhere (DioFactory.create in '
-          'lib/src/drivers/http/factory/dio_factory.dart:24 does not install '
-          'GzipInterceptor), so the config flags are dead.');
+  });
+
+  test('DioFactory does not install GzipInterceptor by default', () {
+    final dio = DioFactory(config: const HttpConfig()).create();
+    expect(dio.interceptors.whereType<GzipInterceptor>(), isEmpty);
+  });
 }

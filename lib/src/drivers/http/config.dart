@@ -5,6 +5,9 @@ class HttpConfig {
   final Map<String, String>? headers;
   final List<int>? certificates;
   final Map<String, String> services;
+
+  /// Gzip-compress request bodies larger than [gzipThreshold] bytes.
+  /// Off by default: the backend must accept `Content-Encoding: gzip`.
   final bool useGzip;
   final int gzipThreshold;
 
@@ -15,7 +18,7 @@ class HttpConfig {
     this.headers,
     this.certificates,
     this.services = const {},
-    this.useGzip = true,
+    this.useGzip = false,
     this.gzipThreshold = 1024,
   });
 
