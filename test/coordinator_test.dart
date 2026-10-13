@@ -129,6 +129,7 @@ class _Harness {
     bool withStreaming = true,
     String Function(AuthorizedState state)? userIdResolver,
     RefreshRejectedPredicate isRefreshRejected = defaultIsRefreshRejected,
+    Duration Function(AuthorizedState state)? refreshDelay,
   })  : session = session ?? InMemoryHttpSession<TokenState>(),
         client = _FakeClient(script ?? (_) => _ok()),
         streaming = withStreaming ? _FakeStreaming() : null {
@@ -140,6 +141,7 @@ class _Harness {
       streaming: streaming,
       cache: cache,
       userIdResolver: userIdResolver,
+      refreshDelay: refreshDelay,
       isRefreshRejected: isRefreshRejected,
       observers: [observer],
       retry: retry,
@@ -178,6 +180,24 @@ SharedApiSession _sharedSession(TokenState? stored) => SharedApiSession(
     );
 
 void main() {
+  // -------------------------------------------------------------------------
+  group('custom refresh delay', () {
+    test('refreshDelay decides when the refresh runs', () {
+      fakeAsync((async) {
+        final h = _Harness(refreshDelay: (_) => const Duration(minutes: 7));
+        h.setup();
+        h.session.update(_auth('A'));
+        async.flushMicrotasks();
+
+        async.elapse(const Duration(minutes: 6));
+        expect(h.client.requests, isEmpty);
+        async.elapse(const Duration(minutes: 2));
+        expect(h.client.requests, hasLength(1));
+        h.dispose();
+      });
+    });
+  });
+
   // -------------------------------------------------------------------------
   group('HTTP cache owner tracking', () {
     test('first session event (restore) does NOT clear the cache', () {

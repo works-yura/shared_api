@@ -17,6 +17,9 @@ class ApiCoordinator extends Coordinator<TokenState> {
   /// responses are never served to another.
   final HttpCache? _cache;
 
+  /// When to refresh the token of an authorized session (delay from now).
+  final Duration Function(AuthorizedState state) _refreshDelay;
+
   /// Resolves who owns the cached responses for an authorized session.
   final String Function(AuthorizedState state) _userIdResolver;
 
@@ -33,6 +36,7 @@ class ApiCoordinator extends Coordinator<TokenState> {
     super.streaming,
     MessagingService? messagingService,
     HttpCache? cache,
+    Duration Function(AuthorizedState state)? refreshDelay,
     String Function(AuthorizedState state)? userIdResolver,
     RefreshRejectedPredicate isRefreshRejected = defaultIsRefreshRejected,
     super.observers,
@@ -40,6 +44,7 @@ class ApiCoordinator extends Coordinator<TokenState> {
   })  : _client = client,
         _messagingService = messagingService,
         _cache = cache,
+        _refreshDelay = refreshDelay ?? _defaultRefreshDelay,
         _userIdResolver = userIdResolver ?? _defaultUserId,
         _isRefreshRejected = isRefreshRejected,
         _refreshRequestFactory = refreshRequestFactory;
@@ -68,7 +73,7 @@ class ApiCoordinator extends Coordinator<TokenState> {
     _syncCacheOwner(state);
 
     if (state is AuthorizedState) {
-      final delay = state.refreshDelay;
+      final delay = _refreshDelay(state);
       debugPrint(
           '[ApiCoordinator] Session changed: Authorized (userId: ${state.userId}). Next refresh in ${delay.inMinutes}m ${delay.inSeconds % 60}s');
 
@@ -94,6 +99,9 @@ class ApiCoordinator extends Coordinator<TokenState> {
       streaming?.disconnect();
     }
   }
+
+  static Duration _defaultRefreshDelay(AuthorizedState state) =>
+      state.refreshDelay;
 
   /// JWT `sub` when available. Opaque tokens carry no identity, so fall back
   /// to the refresh token: the cache is then cleared on every token rotation,
@@ -128,7 +136,7 @@ class ApiCoordinator extends Coordinator<TokenState> {
   }
 
   void _performTokenRefresh(AuthorizedState state) {
-    scheduleRefresh(state.refreshDelay, () async {
+    scheduleRefresh(_refreshDelay(state), () async {
       if (_isRefreshing) {
         debugPrint(
             '[ApiCoordinator] Refresh already in progress, skipping scheduled task');
