@@ -10,12 +10,13 @@ import 'package:dio/dio.dart';
 /// (no network to Firebase, attestation unavailable, Firebase not ready yet)
 /// the request goes out without the header and the server decides.
 ///
-/// Requests matched by [isOneShot] (sending an OTP) get a limited-use token
-/// instead, which the server consumes on first sight — a token lifted from a
-/// real device cannot be replayed to send more codes. It is fetched again on
+/// Requests matched by [isOneShot] (e.g. sending an OTP; none by default) get
+/// a limited-use token instead, which the server consumes on first sight — a
+/// token lifted from a real device cannot be replayed. It is fetched again on
 /// every pass, retries included, because the previous one may already have
 /// been consumed.
 class AppCheckInterceptor extends InterceptorsWrapper {
+  /// Default [headerName].
   static const header = 'X-Firebase-AppCheck';
 
   final Future<String?> Function() getToken;
@@ -23,16 +24,18 @@ class AppCheckInterceptor extends InterceptorsWrapper {
   final bool Function(String path) isOneShot;
   final Duration timeout;
 
+  /// Header the token is sent in.
+  final String headerName;
+
   AppCheckInterceptor({
     required this.getToken,
     required this.getLimitedUseToken,
-    this.isOneShot = isOtpSend,
+    this.isOneShot = _never,
     this.timeout = const Duration(seconds: 3),
+    this.headerName = header,
   });
 
-  /// Both API versions of the OTP send.
-  static bool isOtpSend(String path) =>
-      Uri.parse(path).path.endsWith('/authentication/phone/send-otp');
+  static bool _never(String path) => false;
 
   @override
   Future<void> onRequest(
@@ -42,9 +45,9 @@ class AppCheckInterceptor extends InterceptorsWrapper {
     final fetch = isOneShot(options.path) ? getLimitedUseToken : getToken;
     final token = await tryAppCheckToken(fetch, timeout);
     if (token != null) {
-      options.headers[header] = token;
+      options.headers[headerName] = token;
     } else {
-      options.headers.remove(header);
+      options.headers.remove(headerName);
     }
     return handler.next(options);
   }

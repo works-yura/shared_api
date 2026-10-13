@@ -158,6 +158,20 @@ void main() {
       expect(t.adapter.requests.single.headers['Authorization'], 'Bearer abc');
     });
 
+    test('custom header name and value builder', () async {
+      final t = _setup(BearerTokenInterceptor(
+        session: _FakeSession(_auth('abc')),
+        headerName: 'X-Api-Token',
+        headerValue: (token) => 'Token $token',
+      ));
+
+      await t.dio.get<dynamic>('/me');
+
+      final headers = t.adapter.requests.single.headers;
+      expect(headers['X-Api-Token'], 'Token abc');
+      expect(headers.containsKey('Authorization'), false);
+    });
+
     test('keeps a caller-supplied Authorization when not authorized', () async {
       final t = _setup(BearerTokenInterceptor(session: _FakeSession()));
 
@@ -268,6 +282,25 @@ void main() {
       expect(r.calls, 0);
       expect(r.error.response?.statusCode, 402);
       expect(r.error.type, DioExceptionType.badResponse);
+    });
+
+    test('custom matches replaces the default contract', () async {
+      var calls = 0;
+      final t = _setup(
+        SubscriptionInterceptor(
+          onSubscriptionRequired: () => calls++,
+          matches: (e) => e.response?.statusCode == 403,
+        ),
+        respond: (o) => o.path == '/limited'
+            ? _status(403, '{"code":"PLAN_LIMIT"}')
+            : _status(402, '{"code":"SUBSCRIPTION_REQUIRED"}'),
+      );
+
+      for (final path in ['/limited', '/premium']) {
+        await expectLater(
+            t.dio.get<dynamic>(path), throwsA(isA<DioException>()));
+      }
+      expect(calls, 1, reason: 'only the 403 matches');
     });
   });
 

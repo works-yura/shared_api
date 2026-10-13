@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_api/src/core/http/request.dart';
 import 'package:shared_api/src/core/http/response.dart';
 import 'package:shared_api/src/core/utils/observer.dart';
+import 'package:shared_api/src/core/exceptions/error_envelope.dart';
 import 'package:shared_api/src/core/exceptions/exception.dart';
 import 'package:shared_api/src/core/session/session.dart';
 import 'package:shared_api/src/core/cache/cache.dart';
@@ -36,6 +37,9 @@ class ApiClient<S extends HttpState, C extends HttpCredentials>
   final HttpCache cache;
   final List<HttpObserver> observers;
 
+  /// Reads the backend's error body into [HttpResponseException]s.
+  final ErrorEnvelopeParser errorEnvelope;
+
   ApiClient({
     required this.dio,
     required this.config,
@@ -43,6 +47,7 @@ class ApiClient<S extends HttpState, C extends HttpCredentials>
     required this.credentials,
     required this.cache,
     this.observers = const [],
+    this.errorEnvelope = const ErrorEnvelopeParser(),
   }) {
     _installCacheInterceptor();
   }
@@ -143,7 +148,7 @@ class ApiClient<S extends HttpState, C extends HttpCredentials>
 
       return Try.success(result);
     } on DioException catch (e) {
-      final exception = DioErrorHandler.handle(e);
+      final exception = DioErrorHandler.handle(e, envelope: errorEnvelope);
       for (var o in observers) {
         o.onError(exception);
       }
@@ -198,7 +203,7 @@ class ApiClient<S extends HttpState, C extends HttpCredentials>
 
       return Try.success(null);
     } on DioException catch (e) {
-      final exception = DioErrorHandler.handle(e);
+      final exception = DioErrorHandler.handle(e, envelope: errorEnvelope);
       return Try.failed(exception);
     } catch (e) {
       return Try.failed(HttpException.unknown(message: e.toString()));

@@ -5,8 +5,15 @@ import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_api/src/drivers/http/interceptors/app_check.dart';
 
+/// The app's one-shot endpoint: both API versions of the OTP send.
+bool _isOtpSend(String path) =>
+    Uri.parse(path).path.endsWith('/authentication/phone/send-otp');
+
 /// Answers 200 and records the App Check header of every call.
 class _Adapter implements HttpClientAdapter {
+  final String header;
+  _Adapter([this.header = AppCheckInterceptor.header]);
+
   final seen = <String?>[];
 
   @override
@@ -15,7 +22,7 @@ class _Adapter implements HttpClientAdapter {
     Stream<Uint8List>? requestStream,
     Future<void>? cancelFuture,
   ) async {
-    seen.add(options.headers[AppCheckInterceptor.header] as String?);
+    seen.add(options.headers[header] as String?);
     return ResponseBody.fromString('{}', 200, headers: {
       Headers.contentTypeHeader: [Headers.jsonContentType],
     });
@@ -34,8 +41,10 @@ void main() {
   Dio build({
     Future<String?> Function()? token,
     Future<String?> Function()? limitedToken,
+    bool Function(String path)? isOneShot = _isOtpSend,
+    String? headerName,
   }) {
-    adapter = _Adapter();
+    adapter = headerName == null ? _Adapter() : _Adapter(headerName);
     return Dio(BaseOptions(baseUrl: 'https://api.test'))
       ..httpClientAdapter = adapter
       ..interceptors.add(AppCheckInterceptor(
@@ -50,6 +59,8 @@ void main() {
               return 'limited-$limited';
             },
         timeout: const Duration(milliseconds: 50),
+        isOneShot: isOneShot ?? (_) => false,
+        headerName: headerName ?? AppCheckInterceptor.header,
       ));
   }
 
@@ -117,12 +128,27 @@ void main() {
     expect(adapter.seen, [null]);
   });
 
-  test('a full URL path is matched too', () {
-    expect(
-      AppCheckInterceptor.isOtpSend(
-          'https://api.drunker.app/api/v1.5/authentication/phone/send-otp'),
-      isTrue,
-    );
-    expect(AppCheckInterceptor.isOtpSend('/api/v1/users/me'), isFalse);
+  test('a full URL path is matched too', () async {
+    await dio
+        .post('https://api.drunker.app/api/v1.5/authentication/phone/send-otp');
+    await dio.get('https://api.drunker.app/api/v1/users/me');
+    expect(adapter.seen, ['limited-1', 'regular-1']);
+  });
+
+  test('by default no request is one-shot', () async {
+    dio = Dio(BaseOptions(baseUrl: 'https://api.test'))
+      ..httpClientAdapter = adapter
+      ..interceptors.add(AppCheckInterceptor(
+        getToken: () async => 'regular',
+        getLimitedUseToken: () async => 'limited',
+      ));
+    await dio.post('/api/v1/authentication/phone/send-otp');
+    expect(adapter.seen, ['regular']);
+  });
+
+  test('custom header name', () async {
+    dio = build(headerName: 'X-App-Attest', isOneShot: null);
+    await dio.get('/api/v1/users/me');
+    expect(adapter.seen, ['regular-1']);
   });
 }

@@ -165,6 +165,52 @@ void main() {
     });
   });
 
+  group('ErrorEnvelopeParser', () {
+    HttpResponseException handle(Object? data,
+            {int status = 400, ErrorEnvelopeParser? envelope}) =>
+        DioErrorHandler.handle(
+          _error(DioExceptionType.badResponse,
+              response: _response(data, status: status), message: 'dio msg'),
+          envelope: envelope ?? const ErrorEnvelopeParser(),
+        ) as HttpResponseException;
+
+    const custom = _JsonApiEnvelope();
+    final body = {
+      'errors': [
+        {'detail': 'Email taken', 'code': 'EMAIL_TAKEN', 'field': 'email'}
+      ]
+    };
+
+    test('custom parser supplies message, code and field errors', () {
+      final e = handle(body, status: 422, envelope: custom);
+      expect(e.message, 'Email taken');
+      expect(e.errorCode, 'EMAIL_TAKEN');
+      expect(
+          e.toFailure(),
+          isA<ValidationFailure>()
+              .having((f) => f.errors, 'errors', {'email': 'Email taken'}));
+    });
+
+    test('custom parser returning null message falls back to Dio message', () {
+      expect(handle({'x': 1}, envelope: custom).message, 'dio msg');
+    });
+
+    test('default parser ignores a non-map errors value', () {
+      final f = handle({'message': 'a', 'errors': 'oops'}).toFailure();
+      expect(f, isA<ValidationFailure>().having((f) => f.errors, 'errors', {}));
+    });
+
+    test('codeFailures maps a custom code before the status mapping', () {
+      final e = handle({'message': 'Pay', 'errorCode': 'PAYMENT'},
+          status: 402,
+          envelope: ErrorEnvelopeParser(codeFailures: {
+            'PAYMENT': (e) => ServerFailure(e.message, 'PAYMENT'),
+          }));
+      expect(e.toFailure(),
+          isA<ServerFailure>().having((f) => f.code, 'code', 'PAYMENT'));
+    });
+  });
+
   group('HttpException.when', () {
     test('dispatches to the matching handler', () {
       String run(HttpException e) => e.when(
@@ -222,4 +268,30 @@ void main() {
               .having((f) => f.originalError, 'originalError', 'bad json'));
     });
   });
+}
+
+/// JSON:API-style `{errors: [{detail, code, field}]}` bodies.
+class _JsonApiEnvelope extends ErrorEnvelopeParser {
+  const _JsonApiEnvelope();
+
+  Map? _first(Object? data) {
+    if (data is! Map) return null;
+    final errors = data['errors'];
+    return errors is List && errors.isNotEmpty && errors.first is Map
+        ? errors.first as Map
+        : null;
+  }
+
+  @override
+  String? message(Object? data) => _first(data)?['detail'] as String?;
+
+  @override
+  String? code(Object? data) => _first(data)?['code'] as String?;
+
+  @override
+  Map<String, dynamic>? fieldErrors(Object? data) {
+    final first = _first(data);
+    if (first == null) return null;
+    return {first['field'] as String: first['detail']};
+  }
 }

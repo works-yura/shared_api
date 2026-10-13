@@ -11,11 +11,67 @@ class InvalidRefreshTokenException extends DioException {
   InvalidRefreshTokenException({required super.requestOptions});
 }
 
+/// Decides something about a failed request (e.g. "is this a 401?").
+typedef DioErrorPredicate = bool Function(DioException error);
+
+/// Decides whether a failed refresh call means the refresh token itself was
+/// rejected, i.e. the session is gone and the user must sign in again.
+typedef RefreshRejectedPredicate = bool Function(HttpException failure);
+
+/// Default [RefreshTokenInterceptor.isUnauthorized]: only 401.
+///
+/// A 403 is a business-authorization failure (e.g. "only the owner can do
+/// X"): refreshing won't help, and treating it as an auth error made a
+/// legitimate 403 flow through the refresh path and ultimately log the user
+/// out. It is passed through as a normal error so the caller can surface it.
+bool defaultIsUnauthorized(DioException error) =>
+    error.response?.statusCode == HttpStatus.unauthorized;
+
+/// Default [RefreshTokenInterceptor.isSessionExpired]: the body says
+/// `message: 'authentication.session_expired'`.
+bool defaultIsSessionExpired(DioException error) {
+  final data = error.response?.data;
+  if (data is Map) {
+    return data['message'] == 'authentication.session_expired' ||
+        data['error'] == 'UNAUTHORIZED' &&
+            data['statusCode'] == 401 &&
+            data['message'] == 'authentication.session_expired';
+  }
+  return false;
+}
+
+/// Default refresh-rejection check shared by [RefreshTokenInterceptor] and
+/// [ApiCoordinator]: the refresh endpoint answered 401 or 403.
+bool defaultIsRefreshRejected(HttpException failure) =>
+    failure is HttpResponseException &&
+    (failure.status == 401 || failure.status == 403);
+
 class RefreshTokenInterceptor extends InterceptorsWrapper {
   final Dio dio;
   final HttpSession<TokenState> session;
   final ApiClient client;
   final RefreshRequestFactory refreshRequestFactory;
+
+  /// Whether an error means "access token invalid/expired -> try to refresh".
+  final DioErrorPredicate isUnauthorized;
+
+  /// Whether an error means the session is definitively over (log out, no
+  /// refresh attempt).
+  final DioErrorPredicate isSessionExpired;
+
+  /// Whether a failed refresh call means the session is gone (log out).
+  final RefreshRejectedPredicate isRefreshRejected;
+
+  /// Header the access token is sent in.
+  final String authHeaderName;
+
+  /// Builds the [authHeaderName] value for an access token.
+  final AuthHeaderBuilder authHeaderValue;
+
+  /// Whether a request was sent with credentials, i.e. a 401 on it is worth a
+  /// refresh. Defaults to "carries [authHeaderName]".
+  final bool Function(RequestOptions options) isSecured;
+
   final Lock _lock = Lock();
 
   /// Marks a request that is a retry/refresh issued by this interceptor, so a
@@ -28,7 +84,14 @@ class RefreshTokenInterceptor extends InterceptorsWrapper {
     required this.session,
     required this.client,
     required this.refreshRequestFactory,
-  });
+    this.isUnauthorized = defaultIsUnauthorized,
+    this.isSessionExpired = defaultIsSessionExpired,
+    this.isRefreshRejected = defaultIsRefreshRejected,
+    this.authHeaderName = HttpHeaders.authorizationHeader,
+    this.authHeaderValue = bearerAuthHeader,
+    bool Function(RequestOptions options)? isSecured,
+  }) : isSecured = isSecured ??
+            ((options) => options.headers.containsKey(authHeaderName));
 
   @override
   Future<void> onError(
@@ -36,8 +99,7 @@ class RefreshTokenInterceptor extends InterceptorsWrapper {
     ErrorInterceptorHandler handler,
   ) async {
     // 1. 401/403 check for SECURED requests only
-    if (!(_isUnauthorizedError(error) &&
-        _isRequestSecured(error.requestOptions))) {
+    if (!(isUnauthorized(error) && isSecured(error.requestOptions))) {
       return handler.next(error);
     }
 
@@ -64,12 +126,12 @@ class RefreshTokenInterceptor extends InterceptorsWrapper {
             return response;
           } on DioException catch (retryError) {
             // Check for explicit expiry during retry too
-            if (_isSessionExpiredMessage(retryError)) {
+            if (isSessionExpired(retryError)) {
               await _logOut();
               rethrow;
             }
 
-            if (!_isUnauthorizedError(retryError)) {
+            if (!isUnauthorized(retryError)) {
               rethrow;
             }
             debugPrint(
@@ -94,11 +156,9 @@ class RefreshTokenInterceptor extends InterceptorsWrapper {
                 result.fold((f) => f, (s) => throw StateError('Unreachable'));
             debugPrint('[RefreshTokenInterceptor] Refresh failed: $failure');
 
-            // If refresh fails with 401, it means the session is completely gone.
-            if (failure is HttpResponseException) {
-              if (failure.status == 401 || failure.status == 403) {
-                await _logOut();
-              }
+            // A rejected refresh token means the session is completely gone.
+            if (isRefreshRejected(failure)) {
+              await _logOut();
             }
             throw InvalidRefreshTokenException(
                 requestOptions: error.requestOptions);
@@ -110,7 +170,7 @@ class RefreshTokenInterceptor extends InterceptorsWrapper {
         } catch (e) {
           debugPrint('[RefreshTokenInterceptor] Error during refresh: $e');
 
-          if (e is DioException && _isSessionExpiredMessage(e)) {
+          if (e is DioException && isSessionExpired(e)) {
             await _logOut();
           } else if (e is! InvalidRefreshTokenException) {
             await _logOut();
@@ -132,32 +192,10 @@ class RefreshTokenInterceptor extends InterceptorsWrapper {
     }
   }
 
-  // Only 401 means "token invalid/expired → try to refresh". A 403 is a
-  // business-authorization failure (e.g. "only the owner can do X"): refreshing
-  // won't help, and treating it as an auth error made a legitimate 403 flow
-  // through the refresh path and ultimately log the user out. Pass 403 through
-  // as a normal error so the caller can surface it.
-  bool _isUnauthorizedError(DioException error) =>
-      error.response?.statusCode == HttpStatus.unauthorized;
-
-  bool _isSessionExpiredMessage(DioException error) {
-    final data = error.response?.data;
-    if (data is Map) {
-      return data['message'] == 'authentication.session_expired' ||
-          data['error'] == 'UNAUTHORIZED' &&
-              data['statusCode'] == 401 &&
-              data['message'] == 'authentication.session_expired';
-    }
-    return false;
-  }
-
   Future<void> _logOut() async {
     await session.update(
         TokenState.unauthorized(reason: UnauthorizedReason.sessionExpired));
   }
-
-  bool _isRequestSecured(RequestOptions options) =>
-      options.headers.containsKey(HttpHeaders.authorizationHeader);
 
   bool _isRefreshRequest(RequestOptions options) =>
       options.extra[HttpConstants.refreshRequestKey] == true;
@@ -165,8 +203,7 @@ class RefreshTokenInterceptor extends InterceptorsWrapper {
   Future<Response<dynamic>> retry(RequestOptions options) async {
     final state = await session.read();
     if (state is AuthorizedState) {
-      options.headers[HttpHeaders.authorizationHeader] =
-          'Bearer ${state.access}';
+      options.headers[authHeaderName] = authHeaderValue(state.access);
     }
 
     final request = Options(

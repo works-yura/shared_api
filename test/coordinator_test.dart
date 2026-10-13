@@ -129,6 +129,7 @@ class _Harness {
         const RetryConfig(maxAttempts: 2, initialDelay: Duration(seconds: 1)),
     bool withStreaming = true,
     String Function(AuthorizedState state)? userIdResolver,
+    RefreshRejectedPredicate isRefreshRejected = defaultIsRefreshRejected,
   })  : session = session ?? InMemoryHttpSession<TokenState>(),
         client = _FakeClient(script ?? (_) => _ok()),
         streaming = withStreaming ? _FakeStreaming() : null {
@@ -140,6 +141,7 @@ class _Harness {
       streaming: streaming,
       cache: cache,
       userIdResolver: userIdResolver,
+      isRefreshRejected: isRefreshRejected,
       observers: [observer],
       retry: retry,
     );
@@ -425,6 +427,43 @@ void main() {
         });
       });
     }
+
+    test('custom isRefreshRejected: 400 -> unauthorized, no retry', () {
+      fakeAsync((async) {
+        final h = _Harness(
+          script: (_) => Try.failed(_httpError(400)),
+          isRefreshRejected: (f) =>
+              f is HttpResponseException && f.status == 400,
+        );
+        h.setup();
+        h.session.update(_auth('A'));
+        async.flushMicrotasks();
+        async.elapse(const Duration(hours: 1));
+
+        expect(h.client.requests, hasLength(1));
+        expect(h.emitted.last, isA<UnauthorizedState>());
+        expect(async.pendingTimers, isEmpty);
+        h.dispose();
+      });
+    });
+
+    test('custom isRefreshRejected: 401 is retried, session kept', () {
+      fakeAsync((async) {
+        final h = _Harness(
+          script: (call) => call == 0 ? Try.failed(_httpError(401)) : _ok(),
+          isRefreshRejected: (_) => false,
+        );
+        h.setup();
+        h.session.update(_auth('A'));
+        async.flushMicrotasks();
+        async.elapse(const Duration(hours: 1));
+        async.elapse(const Duration(seconds: 5));
+
+        expect(h.client.requests, hasLength(2));
+        expect(h.emitted.whereType<UnauthorizedState>(), isEmpty);
+        h.dispose();
+      });
+    });
 
     test('refresh 401 with SharedApiSession emits unauthorized(sessionExpired)',
         () {

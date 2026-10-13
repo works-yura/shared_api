@@ -1,3 +1,4 @@
+import 'package:shared_api/src/core/exceptions/error_envelope.dart';
 import 'package:shared_api/src/core/exceptions/failures.dart';
 
 enum HttpExceptionType {
@@ -65,12 +66,14 @@ final class HttpException implements Exception {
     String? message,
     dynamic data,
     required Map<String, List<String>> headers,
+    ErrorEnvelopeParser envelope = const ErrorEnvelopeParser(),
   }) {
     return HttpResponseException(
       status: status ?? 500,
       message: message ?? 'Server Error',
       headers: headers,
       data: data,
+      envelope: envelope,
     );
   }
 
@@ -132,36 +135,32 @@ final class HttpResponseException extends HttpException {
   final Map<String, List<String>> headers;
   final dynamic data;
 
+  /// Reads [errorCode] and validation errors from [data], and maps known codes
+  /// to failures in [toFailure].
+  final ErrorEnvelopeParser envelope;
+
   HttpResponseException({
     required this.status,
     required this.message,
     required this.headers,
     this.data,
+    this.envelope = const ErrorEnvelopeParser(),
   });
 
-  /// The backend's machine-readable reason (`errorCode` in the error body, set
-  /// by its AllExceptionsFilter), or null when it sent none.
+  /// The backend's machine-readable reason (per [envelope]; `errorCode` in the
+  /// error body by default), or null when it sent none.
   ///
-  /// [message] is already localised for display; this is what callers branch
+  /// [message] is usually localised for display; this is what callers branch
   /// on — matching on the human text breaks the moment a translation changes.
-  String? get errorCode {
-    final body = data;
-    if (body is! Map) return null;
-    final code = body['errorCode'];
-    return code is String && code.isNotEmpty ? code : null;
-  }
+  String? get errorCode => envelope.code(data);
 
   @override
   String toString() => message;
 
   @override
   ApiFailure toFailure() {
-    switch (errorCode) {
-      case 'APP_CHECK_FAILED':
-        return AppCheckFailure(AppCheckFailureKind.rejected, message);
-      case 'APP_CHECK_UNAVAILABLE':
-        return AppCheckFailure(AppCheckFailureKind.unavailable, message);
-    }
+    final byCode = envelope.codeFailures[errorCode];
+    if (byCode != null) return byCode(this);
     if (status == 401) {
       return UnauthorizedFailure(message);
     }
@@ -169,11 +168,7 @@ final class HttpResponseException extends HttpException {
       return ForbiddenFailure(message);
     }
     if (status == 400 || status == 422) {
-      if (data is Map<String, dynamic> &&
-          (data as Map<String, dynamic>).containsKey('errors')) {
-        return ValidationFailure(message, data['errors']);
-      }
-      return ValidationFailure(message, {});
+      return ValidationFailure(message, envelope.fieldErrors(data) ?? {});
     }
     if (status >= 500) {
       return ServerFailure(message, status.toString());

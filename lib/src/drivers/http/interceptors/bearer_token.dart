@@ -2,10 +2,26 @@ import 'dart:io' show HttpHeaders;
 import 'package:dio/dio.dart';
 import 'package:shared_api/shared_api.dart';
 
+/// Builds the value of the auth header for an access token.
+typedef AuthHeaderBuilder = String Function(String accessToken);
+
+/// Default [AuthHeaderBuilder]: `Bearer <token>`.
+String bearerAuthHeader(String accessToken) => 'Bearer $accessToken';
+
 class BearerTokenInterceptor extends InterceptorsWrapper {
   final HttpSession<TokenState> session;
 
-  BearerTokenInterceptor({required this.session});
+  /// Header the access token is sent in.
+  final String headerName;
+
+  /// Builds the [headerName] value, e.g. `(t) => 'Token $t'` or `(t) => t`.
+  final AuthHeaderBuilder headerValue;
+
+  BearerTokenInterceptor({
+    required this.session,
+    this.headerName = HttpHeaders.authorizationHeader,
+    this.headerValue = bearerAuthHeader,
+  });
 
   @override
   Future<void> onRequest(
@@ -22,8 +38,7 @@ class BearerTokenInterceptor extends InterceptorsWrapper {
     final state = await session.read();
 
     if (state is AuthorizedState) {
-      options.headers[HttpHeaders.authorizationHeader] =
-          'Bearer ${state.access}';
+      options.headers[headerName] = headerValue(state.access);
     }
 
     return handler.next(options);
