@@ -10,6 +10,7 @@ import 'package:shared_api/src/core/exceptions/exception.dart';
 import 'package:shared_api/src/core/session/session.dart';
 import 'package:shared_api/src/core/cache/cache.dart';
 import 'package:shared_api/src/core/utils/constants.dart';
+import 'package:shared_api/src/drivers/http/interceptors/cache.dart';
 import './cancel_token.dart';
 import './config.dart';
 import './error_handler.dart';
@@ -40,7 +41,22 @@ class ApiClient<S extends HttpState, C extends HttpCredentials>
     required this.credentials,
     required this.cache,
     this.observers = const [],
-  });
+  }) {
+    _installCacheInterceptor();
+  }
+
+  /// Wires [cache] into [dio] via [CacheInterceptor], unless one is already
+  /// installed. It goes first so a cache hit short-circuits auth, retry and
+  /// network interceptors (and stale data can be served offline).
+  void _installCacheInterceptor() {
+    for (final interceptor in dio.interceptors) {
+      if (interceptor is CacheInterceptor) {
+        interceptor.dio ??= dio;
+        return;
+      }
+    }
+    dio.interceptors.insert(0, CacheInterceptor(cache: cache, dio: dio));
+  }
 
   /// Configure all requests
   void configure() {
