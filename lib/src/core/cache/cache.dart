@@ -28,7 +28,19 @@ class CacheEntry {
   });
 
   /// Whether the entry is considered expired based on current time.
+  ///
+  /// An expired entry is still usable: it can be served stale
+  /// ([HttpCachePolicy.staleWhileRevalidate]) or revalidated with a
+  /// conditional GET using [eTag] / [lastModified].
   bool get isExpired => DateTime.now().isAfter(expiresAt);
+
+  /// Whether the entry has been expired for longer than [maxStale] and
+  /// should be evicted instead of served or revalidated.
+  bool isStaleBeyond(Duration maxStale) =>
+      DateTime.now().isAfter(expiresAt.add(maxStale));
+
+  /// Whether the entry carries a validator usable for a conditional GET.
+  bool get hasValidators => eTag != null || lastModified != null;
 
   /// Converts the entry to a JSON-compatible map for persistence.
   Map<String, dynamic> toJson() => {
@@ -73,12 +85,19 @@ class CacheEntry {
 
 /// Interface for HTTP response caching implementations.
 /// Allows for pluggable storage backends (e.g., In-Memory, Hive, SQFLite).
+///
+/// Contract:
+/// - [get] returns an entry **even when it is expired**. Freshness is decided
+///   by the caller (`CacheInterceptor`): expired entries are revalidated with
+///   a conditional GET or served stale, depending on the request policy.
+/// - Implementations own eviction (capacity and/or age) and must never let a
+///   storage failure escape: return `null` / no-op instead.
 abstract class HttpCache {
-  /// Retrieves a [CacheEntry] for the given [key].
+  /// Retrieves a [CacheEntry] for the given [key], fresh or expired.
   /// Returns `null` if no entry is found or if retrieval fails.
   Future<CacheEntry?> get(String key);
 
-  /// Stores [value] in the cache under [key].
+  /// Stores [value] in the cache under [key], replacing any existing entry.
   Future<void> set(
     String key,
     dynamic value, {
@@ -92,30 +111,47 @@ abstract class HttpCache {
   Future<void> remove(String key);
 
   /// Clears all entries from the cache.
+  ///
+  /// Called on sign-out / account switch so one user's responses are never
+  /// served to another.
   Future<void> clear();
 }
 
-/// A production-ready in-memory implementation of [HttpCache] with capacity management.
+/// In-memory [HttpCache] with LRU capacity management and age-based eviction.
+///
+/// Expired entries are kept for [maxStale] after expiry so they can be served
+/// stale or revalidated cheaply (`304 Not Modified`). After that they are
+/// evicted on access. When [maxEntries] is reached, the least recently used
+/// entry is evicted.
 class MapHttpCache implements HttpCache {
+  // LinkedHashMap keeps insertion order; re-inserting on access makes the
+  // first key the least recently used one.
   final Map<String, CacheEntry> _storage = {};
 
   /// The maximum number of entries to keep in memory.
   final int maxEntries;
 
-  MapHttpCache({this.maxEntries = 100});
+  /// How long an entry is kept after it expires.
+  final Duration maxStale;
+
+  MapHttpCache({
+    this.maxEntries = 100,
+    this.maxStale = const Duration(days: 1),
+  }) : assert(maxEntries > 0, 'maxEntries must be positive');
+
+  /// Number of entries currently stored.
+  int get length => _storage.length;
 
   @override
   Future<CacheEntry?> get(String key) async {
     try {
-      final entry = _storage[key];
+      final entry = _storage.remove(key);
       if (entry == null) return null;
 
-      // Auto-cleanup expired entries on access to keep memory clean
-      if (entry.isExpired) {
-        _storage.remove(key);
-        return null;
-      }
+      if (entry.isStaleBeyond(maxStale)) return null;
 
+      // Mark as most recently used.
+      _storage[key] = entry;
       return entry;
     } catch (_) {
       return null; // Graceful failure for production
@@ -132,8 +168,9 @@ class MapHttpCache implements HttpCache {
     Map<String, List<String>> headers = const {},
   }) async {
     try {
-      if (_storage.length >= maxEntries) {
-        // Simple eviction: remove oldest entry (first key in LinkedHashMap)
+      // Replacing an existing key must not evict an unrelated entry.
+      _storage.remove(key);
+      while (_storage.length >= maxEntries) {
         _storage.remove(_storage.keys.first);
       }
 
