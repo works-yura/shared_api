@@ -1,15 +1,17 @@
-class HttpMethod {
-  static const HttpMethod GET = HttpMethod._('GET');
-  static const HttpMethod POST = HttpMethod._('POST');
-  static const HttpMethod PATCH = HttpMethod._('PATCH');
-  static const HttpMethod PUT = HttpMethod._('PUT');
-  static const HttpMethod DELETE = HttpMethod._('DELETE');
-  static const HttpMethod HEAD = HttpMethod._('HEAD');
-  static const HttpMethod OPTIONS = HttpMethod._('OPTIONS');
+/// HTTP request method.
+enum HttpMethod {
+  get('GET'),
+  post('POST'),
+  patch('PATCH'),
+  put('PUT'),
+  delete('DELETE'),
+  head('HEAD'),
+  options('OPTIONS');
 
+  /// Wire value sent in the request line.
   final String value;
 
-  const HttpMethod._(this.value);
+  const HttpMethod(this.value);
 
   W when<W>({
     W Function()? get,
@@ -22,14 +24,13 @@ class HttpMethod {
     required W Function() other,
   }) {
     final handler = switch (this) {
-      GET => get,
-      POST => post,
-      PATCH => patch,
-      PUT => put,
-      DELETE => delete,
-      HEAD => head,
-      OPTIONS => options,
-      _ => other,
+      HttpMethod.get => get,
+      HttpMethod.post => post,
+      HttpMethod.patch => patch,
+      HttpMethod.put => put,
+      HttpMethod.delete => delete,
+      HttpMethod.head => head,
+      HttpMethod.options => options,
     };
     return (handler ?? other).call();
   }

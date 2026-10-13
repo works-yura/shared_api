@@ -81,7 +81,7 @@ class HttpOptions {
   }) {
     return HttpOptions(
       path: path,
-      method: HttpMethod.GET,
+      method: HttpMethod.get,
       queries: queries,
       headers: headers,
       onReceive: onReceive,
@@ -100,7 +100,7 @@ class HttpOptions {
   }) {
     return HttpOptions(
       path: path,
-      method: HttpMethod.POST,
+      method: HttpMethod.post,
       data: data,
       queries: queries,
       headers: headers,
@@ -121,7 +121,7 @@ class HttpOptions {
   }) {
     return HttpOptions(
       path: path,
-      method: HttpMethod.PATCH,
+      method: HttpMethod.patch,
       data: data,
       queries: queries,
       headers: headers,
@@ -141,7 +141,7 @@ class HttpOptions {
   }) {
     return HttpOptions(
       path: path,
-      method: HttpMethod.PUT,
+      method: HttpMethod.put,
       data: data,
       queries: queries,
       headers: headers,
@@ -160,7 +160,7 @@ class HttpOptions {
   }) {
     return HttpOptions(
       path: path,
-      method: HttpMethod.DELETE,
+      method: HttpMethod.delete,
       data: data,
       queries: queries,
       headers: headers,
@@ -179,7 +179,7 @@ class HttpOptions {
   }) {
     return HttpOptions(
       path: path,
-      method: HttpMethod.HEAD,
+      method: HttpMethod.head,
       data: data,
       queries: queries,
       headers: headers,
@@ -198,7 +198,7 @@ class HttpOptions {
   }) {
     return HttpOptions(
       path: path,
-      method: HttpMethod.OPTIONS,
+      method: HttpMethod.options,
       data: data,
       queries: queries,
       headers: headers,
