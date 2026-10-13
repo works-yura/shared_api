@@ -154,9 +154,12 @@ class ApiClient<S extends HttpState, C extends HttpCredentials>
       final cleanDio = Dio();
 
       // Mirror basic configuration from main dio if needed (e.g., SSL bypass for dev)
-      if (!kIsWeb && dio.httpClientAdapter is IOHttpClientAdapter) {
-        (cleanDio.httpClientAdapter as IOHttpClientAdapter).createHttpClient =
-            (dio.httpClientAdapter as IOHttpClientAdapter).createHttpClient;
+      final source = dio.httpClientAdapter;
+      final target = cleanDio.httpClientAdapter;
+      if (!kIsWeb &&
+          source is IOHttpClientAdapter &&
+          target is IOHttpClientAdapter) {
+        target.createHttpClient = source.createHttpClient;
       }
 
       await cleanDio.put<void>(

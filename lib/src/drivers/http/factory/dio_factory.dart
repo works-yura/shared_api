@@ -28,6 +28,10 @@ class DioFactory {
     dio.options.connectTimeout = config.connectTimeout;
     dio.options.sendTimeout = config.sendTimeout;
     dio.options.receiveTimeout = config.receiveTimeout;
+    // Treat 304 Not Modified as a success so it reaches the response
+    // interceptors (CacheInterceptor conditional-GET handler) instead of
+    // being thrown as a DioException.
+    dio.options.validateStatus = HttpValidator.validateStatus;
 
     if (config.headers != null) {
       dio.options.headers.addAll(config.headers!);
@@ -35,19 +39,22 @@ class DioFactory {
 
     // 2. SSL & Platform Config
     if (!kIsWeb) {
-      if (config.certificates != null) {
-        (dio.httpClientAdapter as IOHttpClientAdapter).createHttpClient = () {
-          final securityContext = io.SecurityContext(withTrustedRoots: false);
-          securityContext.setTrustedCertificatesBytes(config.certificates!);
-          return io.HttpClient(context: securityContext);
-        };
-      } else {
-        // Unsafe / Dev mode
-        (dio.httpClientAdapter as IOHttpClientAdapter).createHttpClient = () {
-          final client = io.HttpClient();
-          client.badCertificateCallback = (cert, host, port) => true;
-          return client;
-        };
+      final adapter = dio.httpClientAdapter;
+      if (adapter is IOHttpClientAdapter) {
+        if (config.certificates != null) {
+          adapter.createHttpClient = () {
+            final securityContext = io.SecurityContext(withTrustedRoots: false);
+            securityContext.setTrustedCertificatesBytes(config.certificates!);
+            return io.HttpClient(context: securityContext);
+          };
+        } else {
+          // Unsafe / Dev mode
+          adapter.createHttpClient = () {
+            final client = io.HttpClient();
+            client.badCertificateCallback = (cert, host, port) => true;
+            return client;
+          };
+        }
       }
     }
 
