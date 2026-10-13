@@ -18,6 +18,7 @@ class _FakeAdapter implements HttpClientAdapter {
   final DioExceptionType failType;
   final int? failStatus;
   final Object? failError;
+  final Map<String, String> failHeaders;
   final List<String?> seenKeys = [];
 
   _FakeAdapter({
@@ -25,6 +26,7 @@ class _FakeAdapter implements HttpClientAdapter {
     this.failType = DioExceptionType.connectionError,
     this.failStatus,
     this.failError,
+    this.failHeaders = const {},
   });
 
   @override
@@ -43,6 +45,7 @@ class _FakeAdapter implements HttpClientAdapter {
           failStatus!,
           headers: {
             Headers.contentTypeHeader: [Headers.jsonContentType],
+            for (final e in failHeaders.entries) e.key: [e.value],
           },
         );
       }
@@ -66,7 +69,15 @@ class _FakeAdapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
-Dio _buildDio(_FakeAdapter adapter, {bool withIdempotency = true}) {
+Dio _buildDio(
+  _FakeAdapter adapter, {
+  bool withIdempotency = true,
+  RetryConfig config = const RetryConfig(
+    maxAttempts: 3,
+    initialDelay: Duration(milliseconds: 1),
+  ),
+  bool Function(DioException err)? retryIf,
+}) {
   final dio = Dio(BaseOptions(baseUrl: 'http://test.local'));
   dio.httpClientAdapter = adapter;
   if (withIdempotency) {
@@ -75,10 +86,8 @@ Dio _buildDio(_FakeAdapter adapter, {bool withIdempotency = true}) {
   dio.interceptors.add(
     RetryInterceptor(
       dio: dio,
-      config: const RetryConfig(
-        maxAttempts: 3,
-        initialDelay: Duration(milliseconds: 1),
-      ),
+      config: config,
+      retryIf: retryIf,
     ),
   );
   return dio;
@@ -176,6 +185,192 @@ void main() {
         throwsA(isA<DioException>()),
       );
       expect(adapter400.calls, 1, reason: '400 is a client error, not retried');
+    });
+
+    test('records the attempt count under the public extra key', () async {
+      final adapter = _FakeAdapter(failTimes: 2);
+      final dio = _buildDio(adapter);
+
+      final res = await dio.get('/x');
+
+      expect(res.requestOptions.extra[RetryInterceptor.attemptKey], 2);
+      expect(RetryInterceptor.attemptKey, 'retry_attempt');
+      expect(RetryInterceptor.idempotentKey, 'is_idempotent');
+    });
+
+    test('idempotentKey extra overrides the method check', () async {
+      final noRetry = _FakeAdapter(failTimes: 1);
+      await expectLater(
+        _buildDio(noRetry, withIdempotency: false).get(
+          '/x',
+          options: Options(extra: {RetryInterceptor.idempotentKey: false}),
+        ),
+        throwsA(isA<DioException>()),
+      );
+      expect(noRetry.calls, 1);
+
+      final retry = _FakeAdapter(failTimes: 1);
+      await _buildDio(retry, withIdempotency: false).post(
+        '/x',
+        options: Options(extra: {RetryInterceptor.idempotentKey: true}),
+      );
+      expect(retry.calls, 2);
+    });
+
+    group('retryIf', () {
+      test('custom predicate can retry what the default would not (429)',
+          () async {
+        final adapter = _FakeAdapter(failTimes: 1, failStatus: 429);
+        final dio = _buildDio(
+          adapter,
+          retryIf: (e) =>
+              RetryInterceptor.defaultRetryIf(e) ||
+              (RetryInterceptor.isIdempotentRequest(e.requestOptions) &&
+                  e.response?.statusCode == 429),
+        );
+
+        final res = await dio.get('/x');
+
+        expect(res.statusCode, 200);
+        expect(adapter.calls, 2);
+      });
+
+      test('custom idempotency header makes a mutation retryable', () async {
+        final adapter = _FakeAdapter(failTimes: 1);
+        final dio = Dio(BaseOptions(baseUrl: 'http://test.local'))
+          ..httpClientAdapter = adapter;
+        dio.interceptors
+          ..add(IdempotencyInterceptor(headerName: 'X-Request-Id'))
+          ..add(RetryInterceptor(
+            dio: dio,
+            config: const RetryConfig(initialDelay: Duration(milliseconds: 1)),
+            retryIf: (e) =>
+                RetryInterceptor.isIdempotentRequest(e.requestOptions,
+                    idempotencyHeader: 'X-Request-Id') &&
+                RetryInterceptor.isTransientError(e),
+          ));
+
+        final res = await dio.post('/x');
+
+        expect(res.statusCode, 200);
+        expect(adapter.calls, 2);
+      });
+
+      test('custom predicate can veto retries the default would allow',
+          () async {
+        final adapter = _FakeAdapter(failTimes: 1);
+        final dio = _buildDio(adapter, retryIf: (_) => false);
+
+        await expectLater(dio.get('/x'), throwsA(isA<DioException>()));
+        expect(adapter.calls, 1);
+      });
+
+      test('default predicate: 429 and 500 are not retried', () async {
+        for (final status in [429, 500]) {
+          final adapter = _FakeAdapter(failTimes: 1, failStatus: status);
+          await expectLater(
+            _buildDio(adapter).get('/x'),
+            throwsA(isA<DioException>()),
+          );
+          expect(adapter.calls, 1, reason: '$status');
+        }
+      });
+
+      test('default predicate: 504 and SocketException are retried', () async {
+        final a504 = _FakeAdapter(failTimes: 1, failStatus: 504);
+        await _buildDio(a504).get('/x');
+        expect(a504.calls, 2);
+
+        final socket = _FakeAdapter(
+          failTimes: 1,
+          failType: DioExceptionType.unknown,
+          failError: const SocketException('reset'),
+        );
+        await _buildDio(socket).get('/x');
+        expect(socket.calls, 2);
+      });
+    });
+
+    group('Retry-After', () {
+      // A huge backoff that would time the test out if it were used.
+      const slowBackoff = RetryConfig(
+        maxAttempts: 1,
+        initialDelay: Duration(minutes: 1),
+        maxDelay: Duration(minutes: 1),
+      );
+
+      test('delta-seconds replaces the exponential backoff', () async {
+        final adapter = _FakeAdapter(
+          failTimes: 1,
+          failStatus: 503,
+          failHeaders: {'retry-after': '0'},
+        );
+        final sw = Stopwatch()..start();
+
+        final res = await _buildDio(adapter, config: slowBackoff).get('/x');
+
+        expect(res.statusCode, 200);
+        expect(adapter.calls, 2);
+        expect(sw.elapsed, lessThan(const Duration(seconds: 5)));
+      });
+
+      test('HTTP-date in the past retries immediately', () async {
+        final adapter = _FakeAdapter(
+          failTimes: 1,
+          failStatus: 503,
+          failHeaders: {
+            'retry-after': HttpDate.format(
+                DateTime.now().subtract(const Duration(hours: 1))),
+          },
+        );
+        final sw = Stopwatch()..start();
+
+        await _buildDio(adapter, config: slowBackoff).get('/x');
+
+        expect(adapter.calls, 2);
+        expect(sw.elapsed, lessThan(const Duration(seconds: 5)));
+      });
+
+      test('is capped by RetryConfig.maxDelay', () async {
+        for (final header in [
+          '3600',
+          HttpDate.format(DateTime.now().add(const Duration(hours: 1))),
+        ]) {
+          final adapter = _FakeAdapter(
+            failTimes: 1,
+            failStatus: 503,
+            failHeaders: {'retry-after': header},
+          );
+          final sw = Stopwatch()..start();
+
+          await _buildDio(
+            adapter,
+            config: const RetryConfig(
+              maxAttempts: 1,
+              initialDelay: Duration(milliseconds: 1),
+              maxDelay: Duration(milliseconds: 50),
+            ),
+          ).get('/x');
+
+          expect(adapter.calls, 2);
+          expect(sw.elapsed,
+              greaterThanOrEqualTo(const Duration(milliseconds: 50)));
+          expect(sw.elapsed, lessThan(const Duration(seconds: 5)));
+        }
+      });
+
+      test('malformed value falls back to backoff', () async {
+        final adapter = _FakeAdapter(
+          failTimes: 1,
+          failStatus: 503,
+          failHeaders: {'retry-after': 'soon'},
+        );
+
+        final res = await _buildDio(adapter).get('/x');
+
+        expect(res.statusCode, 200);
+        expect(adapter.calls, 2);
+      });
     });
   });
 }

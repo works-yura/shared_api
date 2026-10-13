@@ -6,8 +6,8 @@ import 'package:shared_api/src/core/streaming/client.dart';
 /// Why: app sitting idle in foreground can lose its TCP socket (Wi-Fi blip,
 /// server idle timeout, mobile network handoff) without the OS firing a
 /// background→foreground lifecycle event. Without this hook, the WS stays
-/// dead until the next scheduled token refresh (~13 min) — meanwhile real-time
-/// events (matches, messages) silently drop.
+/// dead until the next scheduled token refresh — meanwhile real-time events
+/// silently drop.
 ///
 /// Strategy: an HTTP response can restart a fully stopped socket. An active
 /// connection attempt or backoff timer owns its own retries; calling connect

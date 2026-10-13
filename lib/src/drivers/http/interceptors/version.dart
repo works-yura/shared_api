@@ -1,9 +1,17 @@
 import 'package:dio/dio.dart';
 
-/// Interceptor that adds the X-App-Version and X-App-Build headers to all requests.
+/// Interceptor that adds the app version and build number headers
+/// ([versionHeader], [buildHeader]; `X-App-Version` and `X-App-Build` by
+/// default) to all requests.
 class VersionInterceptor extends InterceptorsWrapper {
   final Future<String> Function() getAppVersion;
   final Future<String> Function() getBuildNumber;
+
+  /// Header carrying the app version.
+  final String versionHeader;
+
+  /// Header carrying the build number.
+  final String buildHeader;
 
   String? _cachedVersion;
   String? _cachedBuild;
@@ -11,6 +19,8 @@ class VersionInterceptor extends InterceptorsWrapper {
   VersionInterceptor({
     required this.getAppVersion,
     required this.getBuildNumber,
+    this.versionHeader = 'X-App-Version',
+    this.buildHeader = 'X-App-Build',
   });
 
   @override
@@ -21,8 +31,8 @@ class VersionInterceptor extends InterceptorsWrapper {
     _cachedVersion ??= await getAppVersion();
     _cachedBuild ??= await getBuildNumber();
 
-    options.headers['X-App-Version'] = _cachedVersion;
-    options.headers['X-App-Build'] = _cachedBuild;
+    options.headers[versionHeader] = _cachedVersion;
+    options.headers[buildHeader] = _cachedBuild;
 
     return handler.next(options);
   }

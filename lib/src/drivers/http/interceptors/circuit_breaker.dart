@@ -3,129 +3,36 @@ import 'package:dio/dio.dart';
 
 enum CircuitState { closed, open, halfOpen }
 
+/// Fails fast while a backend is unhealthy instead of piling up requests.
+///
+/// After [CircuitBreakerConfig.failureThreshold] consecutive failures the
+/// circuit opens and rejects requests with [CircuitBreakerOpenException].
+/// After [CircuitBreakerConfig.resetTimeout] one probe request is let through
+/// (half-open); [CircuitBreakerConfig.successThreshold] successes close it.
+///
+/// - [isFailure] decides which errors count. Defaults to [defaultIsFailure]:
+///   network errors and 5xx.
+/// - [keyOf] splits requests into independent circuits, e.g.
+///   `(o) => o.uri.host` for one circuit per host. Defaults to one global
+///   circuit for all requests.
+/// - [now] is the clock, injectable for tests.
 class CircuitBreakerInterceptor extends Interceptor {
   final CircuitBreakerConfig config;
+  final bool Function(DioException err) isFailure;
+  final String Function(RequestOptions options)? keyOf;
+  final DateTime Function() now;
 
-  // State management
-  CircuitState _state = CircuitState.closed;
-  int _failureCount = 0;
-  int _successCount = 0;
-  DateTime? _lastFailureTime;
-  bool _isTestingHalfOpen = false;
+  final Map<String, _Circuit> _circuits = {};
 
   CircuitBreakerInterceptor({
     this.config = const CircuitBreakerConfig(),
-  });
+    bool Function(DioException err)? isFailure,
+    this.keyOf,
+    this.now = DateTime.now,
+  }) : isFailure = isFailure ?? defaultIsFailure;
 
-  @override
-  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
-    if (_state == CircuitState.open) {
-      if (_lastFailureTime != null &&
-          DateTime.now().difference(_lastFailureTime!) > config.resetTimeout) {
-        _transitionToHalfOpen();
-      } else {
-        // Fast fail
-        return handler.reject(
-          DioException(
-            requestOptions: options,
-            type: DioExceptionType.cancel,
-            error: CircuitBreakerOpenException(),
-          ),
-        );
-      }
-    }
-
-    if (_state == CircuitState.halfOpen) {
-      if (_isTestingHalfOpen) {
-        // We already have a request testing the connection. Fail others fast.
-        return handler.reject(
-          DioException(
-            requestOptions: options,
-            type: DioExceptionType.cancel,
-            error: CircuitBreakerOpenException(),
-          ),
-        );
-      }
-      _isTestingHalfOpen = true; // This request is the chosen one!
-    }
-
-    handler.next(options);
-  }
-
-  @override
-  void onResponse(Response response, ResponseInterceptorHandler handler) {
-    _recordSuccess();
-    handler.next(response);
-  }
-
-  @override
-  void onError(DioException err, ErrorInterceptorHandler handler) {
-    if (_isSystemFailure(err)) {
-      _recordFailure();
-    } else if (_state == CircuitState.halfOpen) {
-      if (err.type == DioExceptionType.badResponse) {
-        // A 4xx means the server is reachable and healthy enough to answer.
-        _recordSuccess();
-      } else {
-        // Cancelled / unknown probe proved nothing: let the next request probe.
-        _isTestingHalfOpen = false;
-      }
-    }
-    handler.next(err);
-  }
-
-  void _recordSuccess() {
-    if (_state == CircuitState.halfOpen) {
-      _successCount++;
-      // Probe finished: allow the next request to probe.
-      _isTestingHalfOpen = false;
-      if (_successCount >= config.successThreshold) {
-        _transitionToClosed();
-      }
-    } else {
-      // In closed state, we might want to reset failure count periodically
-      // but for simplicity, we reset it on successful call if we had failures?
-      // Or just keep it. Standard implementation typically uses a time window.
-      // Here we implement a simple consecutive failure count for simplicity.
-      _failureCount = 0;
-    }
-  }
-
-  void _recordFailure() {
-    _failureCount++;
-    _lastFailureTime = DateTime.now();
-
-    if (_state == CircuitState.closed &&
-        _failureCount >= config.failureThreshold) {
-      _transitionToOpen();
-    } else if (_state == CircuitState.halfOpen) {
-      _transitionToOpen();
-    }
-  }
-
-  void _transitionToOpen() {
-    _state = CircuitState.open;
-    _isTestingHalfOpen = false;
-    developer.log('OPEN', name: 'CircuitBreaker');
-  }
-
-  void _transitionToHalfOpen() {
-    _state = CircuitState.halfOpen;
-    _successCount = 0;
-    _isTestingHalfOpen = false; // Ready for a test request
-    developer.log('HALF-OPEN', name: 'CircuitBreaker');
-  }
-
-  void _transitionToClosed() {
-    _state = CircuitState.closed;
-    _failureCount = 0;
-    _successCount = 0;
-    _isTestingHalfOpen = false;
-    developer.log('CLOSED', name: 'CircuitBreaker');
-  }
-
-  bool _isSystemFailure(DioException err) {
-    // Network errors or 5xx server errors
+  /// Network errors or 5xx server errors.
+  static bool defaultIsFailure(DioException err) {
     if (err.type == DioExceptionType.connectionTimeout ||
         err.type == DioExceptionType.sendTimeout ||
         err.type == DioExceptionType.receiveTimeout ||
@@ -138,6 +45,136 @@ class CircuitBreakerInterceptor extends Interceptor {
     }
     return false;
   }
+
+  _Circuit _circuitFor(RequestOptions options) {
+    final key = keyOf?.call(options) ?? '';
+    return _circuits.putIfAbsent(key, () => _Circuit(key));
+  }
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    final circuit = _circuitFor(options);
+
+    if (circuit.state == CircuitState.open) {
+      if (circuit.lastFailureTime != null &&
+          now().difference(circuit.lastFailureTime!) > config.resetTimeout) {
+        circuit.transitionToHalfOpen();
+      } else {
+        // Fast fail
+        return handler.reject(
+          DioException(
+            requestOptions: options,
+            type: DioExceptionType.cancel,
+            error: CircuitBreakerOpenException(),
+          ),
+        );
+      }
+    }
+
+    if (circuit.state == CircuitState.halfOpen) {
+      if (circuit.isTestingHalfOpen) {
+        // We already have a request testing the connection. Fail others fast.
+        return handler.reject(
+          DioException(
+            requestOptions: options,
+            type: DioExceptionType.cancel,
+            error: CircuitBreakerOpenException(),
+          ),
+        );
+      }
+      circuit.isTestingHalfOpen = true; // This request is the chosen one!
+    }
+
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    _circuitFor(response.requestOptions).recordSuccess(config);
+    handler.next(response);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    final circuit = _circuitFor(err.requestOptions);
+    if (isFailure(err)) {
+      circuit.recordFailure(config, now());
+    } else if (circuit.state == CircuitState.halfOpen) {
+      if (err.type == DioExceptionType.badResponse) {
+        // A 4xx means the server is reachable and healthy enough to answer.
+        circuit.recordSuccess(config);
+      } else {
+        // Cancelled / unknown probe proved nothing: let the next request probe.
+        circuit.isTestingHalfOpen = false;
+      }
+    }
+    handler.next(err);
+  }
+}
+
+/// State of a single circuit.
+class _Circuit {
+  final String key;
+
+  CircuitState state = CircuitState.closed;
+  int failureCount = 0;
+  int successCount = 0;
+  DateTime? lastFailureTime;
+  bool isTestingHalfOpen = false;
+
+  _Circuit(this.key);
+
+  void recordSuccess(CircuitBreakerConfig config) {
+    if (state == CircuitState.halfOpen) {
+      successCount++;
+      // Probe finished: allow the next request to probe.
+      isTestingHalfOpen = false;
+      if (successCount >= config.successThreshold) {
+        transitionToClosed();
+      }
+    } else {
+      // Simple consecutive failure count: any success resets it.
+      failureCount = 0;
+    }
+  }
+
+  void recordFailure(CircuitBreakerConfig config, DateTime at) {
+    failureCount++;
+    lastFailureTime = at;
+
+    if (state == CircuitState.closed &&
+        failureCount >= config.failureThreshold) {
+      transitionToOpen();
+    } else if (state == CircuitState.halfOpen) {
+      transitionToOpen();
+    }
+  }
+
+  void transitionToOpen() {
+    state = CircuitState.open;
+    isTestingHalfOpen = false;
+    _log('OPEN');
+  }
+
+  void transitionToHalfOpen() {
+    state = CircuitState.halfOpen;
+    successCount = 0;
+    isTestingHalfOpen = false; // Ready for a test request
+    _log('HALF-OPEN');
+  }
+
+  void transitionToClosed() {
+    state = CircuitState.closed;
+    failureCount = 0;
+    successCount = 0;
+    isTestingHalfOpen = false;
+    _log('CLOSED');
+  }
+
+  void _log(String state) => developer.log(
+        key.isEmpty ? state : '$state ($key)',
+        name: 'CircuitBreaker',
+      );
 }
 
 class CircuitBreakerConfig {

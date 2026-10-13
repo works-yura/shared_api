@@ -221,4 +221,86 @@ void main() {
     expect(dio.interceptors.first, isA<CacheInterceptor>());
     expect(installed.single.dio, same(dio));
   });
+
+  group('cache key', () {
+    ({Dio dio, _Adapter adapter, MapHttpCache cache}) setupWith({
+      List<String> varyHeaders = CacheInterceptor.defaultVaryHeaders,
+      String Function(RequestOptions options)? cacheKeyBuilder,
+    }) {
+      final dio = Dio(BaseOptions(baseUrl: 'https://api.test'));
+      final adapter = _Adapter((call, _) => _json('{"n":$call}'));
+      dio.httpClientAdapter = adapter;
+      final cache = MapHttpCache();
+      dio.interceptors.add(CacheInterceptor(
+        cache: cache,
+        dio: dio,
+        varyHeaders: varyHeaders,
+        cacheKeyBuilder: cacheKeyBuilder,
+      ));
+      return (dio: dio, adapter: adapter, cache: cache);
+    }
+
+    Future<dynamic> get(Dio dio, Map<String, String> headers) async =>
+        (await dio.get<dynamic>(
+          '/items',
+          queryParameters: {'b': 2, 'a': 1},
+          options: Options(
+            headers: headers,
+            extra: {HttpConstants.cachePolicyKey: HttpCachePolicy.useCache},
+          ),
+        ))
+            .data;
+
+    test('default key varies by Accept-Language only (format unchanged)',
+        () async {
+      final t = setupWith();
+
+      await get(t.dio, {'Accept-Language': 'uk', 'x-country-code': 'UA'});
+      // Different country, same language: served from cache.
+      final data =
+          await get(t.dio, {'Accept-Language': 'uk', 'x-country-code': 'PL'});
+      await get(t.dio, {'Accept-Language': 'en'});
+
+      expect(data, {'n': 0});
+      expect(t.adapter.requests, hasLength(2));
+      expect(await t.cache.get('https://api.test/items?a=1&b=2&lang=uk'),
+          isNotNull);
+    });
+
+    test('varyHeaders adds request headers to the key', () async {
+      final t = setupWith(
+        varyHeaders: const ['Accept-Language', 'x-country-code'],
+      );
+
+      await get(t.dio, {'Accept-Language': 'uk', 'x-country-code': 'UA'});
+      await get(t.dio, {'Accept-Language': 'uk', 'x-country-code': 'PL'});
+      final cached =
+          await get(t.dio, {'Accept-Language': 'uk', 'X-Country-Code': 'UA'});
+
+      expect(t.adapter.requests, hasLength(2));
+      expect(cached, {'n': 0});
+      expect(
+        await t.cache
+            .get('https://api.test/items?a=1&b=2&lang=uk&x-country-code=PL'),
+        isNotNull,
+      );
+    });
+
+    test('cacheKeyBuilder replaces the default key', () async {
+      final t = setupWith(
+        cacheKeyBuilder: (o) =>
+            '${CacheInterceptor.defaultCacheKey(o)}|tenant=${o.headers['x-tenant']}',
+      );
+
+      await get(t.dio, {'x-tenant': 'a'});
+      await get(t.dio, {'x-tenant': 'b'});
+      await get(t.dio, {'x-tenant': 'a'});
+
+      expect(t.adapter.requests, hasLength(2));
+      expect(
+        await t.cache.get('https://api.test/items?a=1&b=2&lang=|tenant=b'),
+        isNotNull,
+      );
+    });
+  });
 }
