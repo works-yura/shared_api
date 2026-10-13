@@ -1,0 +1,224 @@
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_api/shared_api.dart';
+
+/// Fake adapter answering with scripted responses and recording requests.
+class _Adapter implements HttpClientAdapter {
+  final List<RequestOptions> requests = [];
+
+  /// Builds the response for the n-th call (0-based).
+  final ResponseBody Function(int call, RequestOptions options) respond;
+
+  _Adapter(this.respond);
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    requests.add(options);
+    return respond(requests.length - 1, options);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+ResponseBody _json(
+  String body, {
+  int status = 200,
+  Map<String, String> headers = const {},
+}) {
+  return ResponseBody.fromString(
+    body,
+    status,
+    headers: {
+      Headers.contentTypeHeader: [Headers.jsonContentType],
+      for (final e in headers.entries) e.key: [e.value],
+    },
+  );
+}
+
+Options _policy(HttpCachePolicy policy) =>
+    Options(extra: {HttpConstants.cachePolicyKey: policy});
+
+({Dio dio, _Adapter adapter, MapHttpCache cache}) _setup(
+    ResponseBody Function(int call, RequestOptions options) respond) {
+  final dio = Dio(BaseOptions(baseUrl: 'https://api.test'))
+    ..options.validateStatus = HttpValidator.validateStatus;
+  final adapter = _Adapter(respond);
+  dio.httpClientAdapter = adapter;
+  final cache = MapHttpCache();
+  dio.interceptors.add(CacheInterceptor(cache: cache, dio: dio));
+  return (dio: dio, adapter: adapter, cache: cache);
+}
+
+Future<void> _expire(MapHttpCache cache, String key) async {
+  final entry = (await cache.get(key))!;
+  await cache.set(
+    key,
+    entry.data,
+    expiresAt: DateTime.now().subtract(const Duration(seconds: 1)),
+    eTag: entry.eTag,
+    lastModified: entry.lastModified,
+    headers: entry.headers,
+  );
+}
+
+const _key = 'https://api.test/items?&lang=';
+
+void main() {
+  test('noCache by default: every request hits the network', () async {
+    final t = _setup((call, _) => _json('{"n":$call}'));
+
+    await t.dio.get<dynamic>('/items');
+    await t.dio.get<dynamic>('/items');
+
+    expect(t.adapter.requests, hasLength(2));
+    expect(t.cache.length, 0);
+  });
+
+  test('useCache serves a fresh entry without network', () async {
+    final t = _setup((call, _) => _json('{"n":$call}'));
+
+    await t.dio
+        .get<dynamic>('/items', options: _policy(HttpCachePolicy.useCache));
+    final res = await t.dio
+        .get<dynamic>('/items', options: _policy(HttpCachePolicy.useCache));
+
+    expect(t.adapter.requests, hasLength(1));
+    expect(res.data, {'n': 0});
+    expect(res.headers.value('x-from-cache'), 'true');
+  });
+
+  test('useCache revalidates an expired entry with ETag and handles 304',
+      () async {
+    final t = _setup((call, options) => call == 0
+        ? _json('{"n":0}', headers: {'etag': '"v1"'})
+        : _json('', status: 304));
+
+    await t.dio
+        .get<dynamic>('/items', options: _policy(HttpCachePolicy.useCache));
+    await _expire(t.cache, _key);
+
+    final res = await t.dio
+        .get<dynamic>('/items', options: _policy(HttpCachePolicy.useCache));
+
+    expect(t.adapter.requests[1].headers['If-None-Match'], '"v1"');
+    expect(res.statusCode, 200);
+    expect(res.data, {'n': 0});
+    expect(res.headers.value('x-cache-stale'), isNull);
+    expect((await t.cache.get(_key))!.isExpired, isFalse);
+  });
+
+  test('304 for an evicted entry re-fetches unconditionally', () async {
+    late MapHttpCache cache;
+    final t = _setup((call, options) {
+      if (call == 0) return _json('{"n":0}', headers: {'etag': '"v1"'});
+      if (call == 1) {
+        // Entry disappears while the conditional request is in flight.
+        unawaited(cache.clear());
+        return _json('', status: 304);
+      }
+      return _json('{"n":2}');
+    });
+    cache = t.cache;
+
+    await t.dio
+        .get<dynamic>('/items', options: _policy(HttpCachePolicy.useCache));
+    await _expire(t.cache, _key);
+
+    final res = await t.dio
+        .get<dynamic>('/items', options: _policy(HttpCachePolicy.useCache));
+
+    expect(t.adapter.requests, hasLength(3));
+    expect(t.adapter.requests[2].headers['If-None-Match'], isNull);
+    expect(res.data, {'n': 2});
+  });
+
+  test(
+      'staleWhileRevalidate serves stale data and refreshes once in background',
+      () async {
+    final t = _setup((call, _) => _json('{"n":$call}'));
+    final options = _policy(HttpCachePolicy.staleWhileRevalidate);
+
+    await t.dio.get<dynamic>('/items', options: options);
+    await _expire(t.cache, _key);
+
+    final results = await Future.wait([
+      t.dio.get<dynamic>('/items', options: options),
+      t.dio.get<dynamic>('/items', options: options),
+    ]);
+
+    for (final res in results) {
+      expect(res.data, {'n': 0});
+      expect(res.headers.value('x-cache-stale'), 'true');
+    }
+
+    // Let the background refresh complete.
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    expect(t.adapter.requests, hasLength(2), reason: 'single revalidation');
+    final next = await t.dio.get<dynamic>('/items', options: options);
+    expect(next.data, {'n': 1});
+    expect(next.headers.value('x-cache-stale'), isNull);
+  });
+
+  test('onlyCache rejects on miss', () async {
+    final t = _setup((call, _) => _json('{}'));
+
+    await expectLater(
+      t.dio.get<dynamic>('/items', options: _policy(HttpCachePolicy.onlyCache)),
+      throwsA(isA<DioException>()),
+    );
+    expect(t.adapter.requests, isEmpty);
+  });
+
+  test('Cache-Control no-store is never stored', () async {
+    final t = _setup((call, _) =>
+        _json('{}', headers: {'cache-control': 'no-store, max-age=60'}));
+
+    await t.dio
+        .get<dynamic>('/items', options: _policy(HttpCachePolicy.useCache));
+
+    expect(t.cache.length, 0);
+  });
+
+  test('malformed Expires does not hang the request', () async {
+    final t =
+        _setup((call, _) => _json('{"ok":true}', headers: {'expires': '0'}));
+
+    final res = await t.dio
+        .get<dynamic>('/items', options: _policy(HttpCachePolicy.useCache))
+        .timeout(const Duration(seconds: 2));
+
+    expect(res.data, {'ok': true});
+  });
+
+  test('ApiClient installs a single CacheInterceptor first', () {
+    final dio = Dio()..interceptors.add(InterceptorsWrapper());
+    final cache = MapHttpCache();
+
+    ApiClient<TokenState, ApiCredentials>(
+      dio: dio,
+      config: const HttpConfig(),
+      session: SharedApiSession(
+        onSave: (_) async {},
+        onDelete: () async {},
+        onLoad: () async => null,
+      ),
+      credentials: const ApiCredentials(
+          host: 'api.test', clientID: '', clientSecret: ''),
+      cache: cache,
+    );
+
+    final installed = dio.interceptors.whereType<CacheInterceptor>().toList();
+    expect(installed, hasLength(1));
+    expect(dio.interceptors.first, isA<CacheInterceptor>());
+    expect(installed.single.dio, same(dio));
+  });
+}

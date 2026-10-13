@@ -14,7 +14,15 @@ enum HttpCachePolicy {
   noCache,
 
   /// Only use cache, never hit the network. Fails if not in cache.
+  /// An expired entry is still served.
   onlyCache,
+
+  /// Serve a cached entry immediately even when expired, then refresh it in
+  /// the background (conditional GET) so the next read is fresh. A fresh
+  /// entry resolves the same as [useCache]; a miss falls through to the
+  /// network. Use for read-only, non-critical data (catalogs, lists) where
+  /// briefly showing old data is acceptable.
+  staleWhileRevalidate,
 }
 
 class HttpOptions {
