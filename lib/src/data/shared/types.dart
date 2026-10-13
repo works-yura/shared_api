@@ -11,7 +11,7 @@ export 'package:shared_api/src/data/shared/credentials.dart'
     show ApiCredentials;
 export 'package:shared_api/src/core/http/request.dart' show HttpRequest;
 export 'package:shared_api/src/core/http/requests.dart'
-    show GenericBaseRequest, GenericJsonRequest;
+    show GenericBaseRequest, GenericJsonArrayRequest, GenericJsonRequest;
 export 'package:shared_api/src/core/http/options.dart' show HttpOptions;
 export 'package:shared_api/src/core/http/response.dart' show HttpResponse;
 export 'package:shared_api/src/core/http/data.dart' show HttpData;
@@ -37,6 +37,13 @@ abstract class BaseRequest<R>
 abstract class JsonRequest<R>
     extends GenericJsonRequest<TokenState, ApiCredentials, R> {
   JsonRequest(super.path);
+}
+
+/// A request whose response is a top-level JSON array. Each element is
+/// mapped via [mapItem] to a single `T`; the request returns `List<T>`.
+abstract class JsonArrayRequest<T>
+    extends GenericJsonArrayRequest<TokenState, ApiCredentials, T> {
+  JsonArrayRequest(super.path);
 }
 
 /// Mixin for requests that return authentication tokens.

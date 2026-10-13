@@ -25,3 +25,23 @@ abstract class GenericJsonRequest<S extends HttpState,
   /// Called when a JSON response is received.
   R onJsonResponse(JsonObject json, HttpResponse response);
 }
+
+/// A request that processes top-level JSON array responses, where each
+/// element is mapped through [mapItem] to a single `T`.
+abstract class GenericJsonArrayRequest<S extends HttpState,
+    C extends HttpCredentials, T> extends GenericBaseRequest<S, C, List<T>> {
+  GenericJsonArrayRequest(super.path);
+
+  @override
+  List<T> onResponse(HttpResponse response) {
+    final raw = response.data;
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map<String, dynamic>>()
+        .map((m) => mapItem(JsonObject(m), response))
+        .toList(growable: false);
+  }
+
+  /// Maps a single element of the response array into [T].
+  T mapItem(JsonObject json, HttpResponse response);
+}

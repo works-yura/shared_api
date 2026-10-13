@@ -1,8 +1,8 @@
 import '../shared/types.dart';
 import '../responses/example_response.dart';
 
-/// Example: GET list with query parameters.
-class ExampleGetListRequest extends BaseRequest<List<ExampleResponse>> {
+/// Example: GET top-level JSON array using [JsonArrayRequest].
+class ExampleGetListRequest extends JsonArrayRequest<ExampleResponse> {
   final int page;
   final int limit;
 
@@ -23,9 +23,7 @@ class ExampleGetListRequest extends BaseRequest<List<ExampleResponse>> {
   }
 
   @override
-  List<ExampleResponse> onResponse(HttpResponse response) {
-    return (response.data as List)
-        .map((e) => ExampleResponse.fromJson(JsonObject(e as Map<String, dynamic>)))
-        .toList();
+  ExampleResponse mapItem(JsonObject json, HttpResponse response) {
+    return ExampleResponse.fromJson(json);
   }
 }
