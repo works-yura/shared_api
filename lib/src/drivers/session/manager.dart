@@ -63,28 +63,27 @@ class ApiSession extends HttpSession<TokenState> {
 
       switch (state) {
         case AuthorizedState():
-          _cachedState = state;
+          // Persist first: never cache a state that failed to save.
           await onSave(state);
+          _cachedState = state;
           _controller.add(state);
           break;
         case UnauthorizedState():
-          await clear();
+          await _clear(state.reason);
           break;
       }
     });
   }
 
   @override
-  Future<void> clear() async {
-    // Note: clear is usually called inside update lock, but we keep it safe
-    debugPrint('[ApiSession] Clearing session...');
+  Future<void> clear() => _clear(UnauthorizedReason.manualLogout);
+
+  /// Drops the cached state and storage, then emits [UnauthorizedState] with
+  /// [reason] so listeners can tell an expired session from a manual logout.
+  Future<void> _clear(UnauthorizedReason reason) async {
+    debugPrint('[ApiSession] Clearing session ($reason)...');
     _cachedState = null;
     await onDelete();
-    // Emit UnauthorizedState with manualLogout reason if explicit clear is called?
-    // Or just null? The interface says Stream<State?>. null can mean logged out.
-    // However, TokenState.unauthorized is better.
-    // But clear() is legacy. Let's make it emit UnauthorizedState.
-    _controller
-        .add(TokenState.unauthorized(reason: UnauthorizedReason.manualLogout));
+    _controller.add(TokenState.unauthorized(reason: reason));
   }
 }

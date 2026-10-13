@@ -385,8 +385,7 @@ void main() {
       });
     }
 
-    test(
-        'refresh 401 with SharedApiSession emits unauthorized(sessionExpired)',
+    test('refresh 401 with SharedApiSession emits unauthorized(sessionExpired)',
         () {
       fakeAsync((async) {
         final h = _Harness(
@@ -402,10 +401,7 @@ void main() {
         expect(last.reason, UnauthorizedReason.sessionExpired);
         h.dispose();
       });
-    },
-        skip: 'BUG: ApiSession.update(UnauthorizedState) delegates to clear(), '
-            'which always emits manualLogout - the sessionExpired reason is '
-            'lost (lib/src/drivers/session/manager.dart:71,87-88)');
+    });
 
     test('non-auth failure (500) retries with backoff then succeeds', () {
       fakeAsync((async) {

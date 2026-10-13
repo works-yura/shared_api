@@ -205,10 +205,12 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(events, isEmpty);
+      // Not cached: a failed save must not leave an unsaved state in memory.
+      expect(await session.read(), isNull);
       await sub.cancel();
     });
 
-    test('unauthorized: calls onDelete, emits manualLogout, clears cache',
+    test('unauthorized: calls onDelete, emits given reason, clears cache',
         () async {
       final token = _auth();
       final storage = _Storage();
@@ -224,9 +226,8 @@ void main() {
       expect(storage.deletes, 1);
       expect(storage.saves, 1, reason: 'unauthorized is never saved');
       expect(events, hasLength(1));
-      // Note: clear() always emits manualLogout, regardless of given reason.
       expect((events.single as UnauthorizedState).reason,
-          UnauthorizedReason.manualLogout);
+          UnauthorizedReason.sessionExpired);
       expect(await session.read(), isNull);
       expect(storage.loads, 1, reason: 'cache cleared -> reload from storage');
       await sub.cancel();
@@ -372,10 +373,10 @@ void main() {
 
   group('TokenState factories', () {
     test('produce correct subtypes', () {
-      expect(
-          TokenState.authorized(access: 'a', refresh: 'r', expiresIn: 1),
+      expect(TokenState.authorized(access: 'a', refresh: 'r', expiresIn: 1),
           isA<AuthorizedState>());
-      final u = TokenState.unauthorized(reason: UnauthorizedReason.accessDenied);
+      final u =
+          TokenState.unauthorized(reason: UnauthorizedReason.accessDenied);
       expect(u, isA<UnauthorizedState>());
       expect((u as UnauthorizedState).reason, UnauthorizedReason.accessDenied);
     });

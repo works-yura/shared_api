@@ -546,11 +546,7 @@ void main() {
         emitted.whereType<UnauthorizedState>().single.reason,
         UnauthorizedReason.sessionExpired,
       );
-    },
-        skip: 'BUG: ApiSession.update(UnauthorizedState) calls clear() '
-            '(manager.dart:71), which always emits manualLogout '
-            '(manager.dart:88); the sessionExpired reason passed by the '
-            'interceptor is lost, so UI cannot tell expiry from logout.');
+    });
   });
 }
 
