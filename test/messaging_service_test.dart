@@ -18,7 +18,7 @@ class _FakeStreaming implements Streaming {
   final StreamController<AckResponse> _acks =
       StreamController<AckResponse>.broadcast();
 
-  _FakeStreaming({this.connected = true});
+  _FakeStreaming() : connected = true;
 
   List<dynamic> get sentPayloads =>
       sent.map((r) => (r as RawStreamingRequest).payload).toList();
