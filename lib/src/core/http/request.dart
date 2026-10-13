@@ -7,7 +7,12 @@ abstract class HttpRequest<State extends HttpState,
     Credentials extends HttpCredentials, Response> {
   HttpOptions onRequest(Credentials credentials);
 
-  Response onResponse(HttpResponse response) => response.data as Response;
+  Response onResponse(HttpResponse response) {
+    final data = response.data;
+    if (data is Response) return data;
+    throw StateError(
+        'API response type mismatch: expected $Response, got ${data.runtimeType}');
+  }
 
   State? onSession(Response response) => null;
 

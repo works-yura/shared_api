@@ -53,7 +53,9 @@ class AuthorizedState extends TokenState {
       final resp = utf8.decode(base64Url.decode(normalized));
       final payloadMap = json.decode(resp);
 
-      return payloadMap['sub'] as String? ?? '';
+      if (payloadMap is! Map<String, dynamic>) return '';
+      final sub = payloadMap['sub'];
+      return sub is String ? sub : '';
     } catch (e) {
       return '';
     }

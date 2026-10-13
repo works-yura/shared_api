@@ -18,8 +18,10 @@ class JsonCodec implements Codec {
   Future<Map<String, dynamic>> decode(dynamic data) async {
     return await Isolate.run(() {
       if (data is Map) return Map<String, dynamic>.from(data);
-      if (data is String)
-        return Map<String, dynamic>.from(jsonDecode(data) as Map);
+      if (data is String) {
+        final decoded = jsonDecode(data);
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      }
       return {};
     });
   }

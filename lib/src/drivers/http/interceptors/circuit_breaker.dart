@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'package:dio/dio.dart';
 
 enum CircuitState { closed, open, halfOpen }
@@ -95,14 +96,14 @@ class CircuitBreakerInterceptor extends Interceptor {
   void _transitionToOpen() {
     _state = CircuitState.open;
     _isTestingHalfOpen = false;
-    print('CircuitBreaker: OPEN'); // Consider using a logger
+    developer.log('OPEN', name: 'CircuitBreaker');
   }
 
   void _transitionToHalfOpen() {
     _state = CircuitState.halfOpen;
     _successCount = 0;
     _isTestingHalfOpen = false; // Ready for a test request
-    print('CircuitBreaker: HALF-OPEN');
+    developer.log('HALF-OPEN', name: 'CircuitBreaker');
   }
 
   void _transitionToClosed() {
@@ -110,7 +111,7 @@ class CircuitBreakerInterceptor extends Interceptor {
     _failureCount = 0;
     _successCount = 0;
     _isTestingHalfOpen = false;
-    print('CircuitBreaker: CLOSED');
+    developer.log('CLOSED', name: 'CircuitBreaker');
   }
 
   bool _isSystemFailure(DioException err) {

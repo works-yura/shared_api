@@ -88,6 +88,7 @@ class HttpOptions {
     Map<String, dynamic>? headers,
     final void Function(int progress, int total)? onReceive,
     final void Function(int progress, int total)? onSend,
+    Map<String, dynamic>? extra,
   }) {
     return HttpOptions(
       path: path,
@@ -97,6 +98,7 @@ class HttpOptions {
       headers: headers,
       onReceive: onReceive,
       onSend: onSend,
+      extra: extra,
     );
   }
 
@@ -107,6 +109,7 @@ class HttpOptions {
     Map<String, dynamic>? headers,
     final void Function(int progress, int total)? onReceive,
     final void Function(int progress, int total)? onSend,
+    Map<String, dynamic>? extra,
   }) {
     return HttpOptions(
       path: path,
@@ -116,6 +119,7 @@ class HttpOptions {
       headers: headers,
       onReceive: onReceive,
       onSend: onSend,
+      extra: extra,
     );
   }
 

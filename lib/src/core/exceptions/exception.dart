@@ -97,23 +97,11 @@ final class HttpException implements Exception {
     };
 
     if (handler != null) {
-      // Since handler returns W?, we need to ensure we return W.
-      // The compiler might complain if we return W? from call().
-      // However, since W is generic, it might be nullable.
-      // If W is non-nullable, serialization?.call returning W? is an issue if it returns null.
-      // We should assume that if the user passed a handler, they return a valid W.
-      // But serialization?.call() returns null if serialization is null.
-      // We already checked handler != null, but the lambda inside the switch creates a closure.
-      // The lambda `() => serialization?.call(...)` returns `W?`.
-      // We can cast or explicit check.
       final result = handler();
-      if (result is W) {
-        return result;
-      }
-      // If result is null but W is not nullable? tricky in Dart generic.
-      // Let's assume W allows null or unknown handles it.
-      // For safety, let's just return result as W.
-      return result as W;
+      if (result is W) return result;
+      // serialization handler wraps `serialization?.call(...)`, which returns
+      // null when the caller omitted it. Fall back to unknown().
+      return unknown();
     }
     return unknown();
   }

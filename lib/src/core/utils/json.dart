@@ -36,10 +36,16 @@ class JsonObject {
     if (value == null) return defaultValue;
     if (value is T) return value;
 
-    // Type casting
-    if (T == double && value is num) return value.toDouble() as T;
-    if (T == int && value is num) return value.toInt() as T;
-    if (T == String) return value.toString() as T;
+    // Type coercion via dynamic intermediary so it also works for nullable T
+    dynamic coerced;
+    if (defaultValue is double && value is num) {
+      coerced = value.toDouble();
+    } else if (defaultValue is int && value is num) {
+      coerced = value.toInt();
+    } else if (defaultValue is String) {
+      coerced = value.toString();
+    }
+    if (coerced is T) return coerced;
 
     return defaultValue;
   }
@@ -53,9 +59,14 @@ class JsonObject {
 
     if (value is T) return value;
 
-    // Type casting
-    if (T == double && value is num) return value.toDouble() as T;
-    if (T == int && value is num) return value.toInt() as T;
+    // Type coercion via dynamic intermediary
+    dynamic coerced;
+    if (T == double && value is num) {
+      coerced = value.toDouble();
+    } else if (T == int && value is num) {
+      coerced = value.toInt();
+    }
+    if (coerced is T) return coerced;
 
     throw JsonDeserializationException(key, value, T);
   }
@@ -79,6 +90,16 @@ class JsonObject {
     final value = _data[key];
     if (value == null) return orElse ?? DateTime.now();
     return DateTime.tryParse(value.toString()) ?? (orElse ?? DateTime.now());
+  }
+
+  /// Nullable DateTime parsing. Returns null when the field is
+  /// missing, empty or unparseable.
+  DateTime? timeOrNull(String key) {
+    final value = _data[key];
+    if (value == null) return null;
+    final raw = value.toString();
+    if (raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
   }
 
   /// Get nested object
@@ -113,7 +134,6 @@ class JsonObject {
 
   bool get isNotEmpty => _data.isNotEmpty;
 }
-
 
 extension MapToJsonObject on Map<String, dynamic> {
   JsonObject get json => JsonObject(this);

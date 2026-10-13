@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'package:shared_api/src/core/exceptions/exception.dart';
 import 'package:shared_api/src/core/session/session.dart';
 
@@ -32,7 +33,12 @@ class CompositeHttpObserver implements HttpObserver {
       try {
         action(observer);
       } catch (e, stack) {
-        print('Error in HttpObserver ${observer.runtimeType}: $e\n$stack');
+        developer.log(
+          'Error in HttpObserver ${observer.runtimeType}: $e',
+          name: 'HttpObserver',
+          error: e,
+          stackTrace: stack,
+        );
       }
     }
   }
