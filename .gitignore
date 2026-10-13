@@ -10,8 +10,7 @@ build/
 # Library package: lockfile is not committed
 pubspec.lock
 
-# Generated
-*.freezed.dart
+# Coverage
 coverage/
 
 # IDE
