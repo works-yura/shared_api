@@ -7,12 +7,13 @@ Future<void> main() async {
     onLoad: () async => null, // restore persisted TokenState
   );
   const config = HttpConfig();
+  final cache = MapHttpCache(maxEntries: 200);
 
   final client = ApiClient<TokenState, ApiCredentials>(
     dio: DioFactory(config: config).create(),
     config: config,
     session: session,
-    cache: MapHttpCache(),
+    cache: cache, // CacheInterceptor is installed automatically
     credentials: const ApiCredentials(
       host: 'api.example.com',
       clientID: '',
@@ -24,6 +25,7 @@ Future<void> main() async {
     session: session,
     connectivity: RealNetworkConnectivity(),
     client: client,
+    cache: cache, // cleared on sign-out / account switch
     refreshRequestFactory: (token) => AuthRefreshRequest(refreshToken: token),
   )..setup();
 

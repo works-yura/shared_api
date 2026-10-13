@@ -15,12 +15,13 @@ final session = SharedApiSession(
   onLoad: () async => null, // restore persisted TokenState
 );
 const config = HttpConfig();
+final cache = MapHttpCache(maxEntries: 200);
 
 final client = ApiClient<TokenState, ApiCredentials>(
   dio: DioFactory(config: config).create(),
   config: config,
   session: session,
-  cache: MapHttpCache(),
+  cache: cache, // CacheInterceptor is installed automatically
   credentials: const ApiCredentials(
     host: 'api.example.com',
     clientID: '',
@@ -32,6 +33,7 @@ final coordinator = ApiCoordinator(
   session: session,
   connectivity: RealNetworkConnectivity(),
   client: client,
+  cache: cache, // cleared on sign-out / account switch
   refreshRequestFactory: (token) => AuthRefreshRequest(refreshToken: token),
 )..setup();
 
@@ -66,6 +68,36 @@ class ExampleGetOneRequest extends JsonRequest<ExampleResponse> {
       ExampleResponse.fromJson(json);
 }
 ```
+
+## Caching
+
+Caching is **opt-in per request** (default `HttpCachePolicy.noCache`), only for GET.
+`ApiClient` installs `CacheInterceptor` first in the dio chain, so a cache hit
+skips auth, retry and network.
+
+| Policy | Fresh entry | Expired entry | Miss |
+|---|---|---|---|
+| `noCache` | network, not stored | network, not stored | network |
+| `useCache` | cache | conditional GET (ETag / Last-Modified), `304` extends entry | network, stored |
+| `staleWhileRevalidate` | cache | stale cache now + one background refresh | network, stored |
+| `refresh` | network, stored | network, stored | network, stored |
+| `onlyCache` | cache | stale cache | error |
+
+```dart
+@override
+HttpOptions onRequest(ApiCredentials credentials) =>
+    HttpOptions.get(path).copyWith(
+      cachePolicy: HttpCachePolicy.staleWhileRevalidate,
+    );
+```
+
+- TTL comes from `Cache-Control: max-age` / `Expires`, else `CacheInterceptor.defaultTtl` (5 min).
+  `no-store` is never stored; `no-cache` is stored but always revalidated.
+- Responses served from cache carry `x-from-cache: true`; stale ones also `x-cache-stale: true`.
+- `HttpCache.get` returns expired entries; implementations own eviction.
+  `MapHttpCache` evicts least recently used past `maxEntries` and entries expired longer than `maxStale` (1 day).
+- Use `staleWhileRevalidate` only for non-critical read-only data (catalogs, lists),
+  never for balances, permissions or anything the user just changed.
 
 ## Tree
 
