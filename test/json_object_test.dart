@@ -45,11 +45,7 @@ void main() {
       expect(j.as<int?>('d', 0), 2);
     });
 
-    test('nullable T with null default coerces int -> double',
-        skip: 'BUG: lib/src/core/utils/json.dart:41-46 — coercion is keyed on '
-            'defaultValue runtime type, so as<double?>(k, null) never coerces '
-            'an int value and returns null',
-        () {
+    test('nullable T with null default coerces int -> double', () {
       expect(j.as<double?>('i', null), 5.0);
     });
 

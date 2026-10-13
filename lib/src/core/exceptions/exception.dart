@@ -90,20 +90,14 @@ final class HttpException implements Exception {
       HttpExceptionType.cancel => cancel,
       HttpExceptionType.connection => connection,
       HttpExceptionType.response => response,
-      HttpExceptionType.serialization => () =>
-          serialization?.call(message, originalError),
+      HttpExceptionType.serialization => serialization == null
+          ? null
+          : () => serialization(message, originalError),
       HttpExceptionType.upgradeRequired => upgradeRequired,
       HttpExceptionType.unknown => unknown,
     };
 
-    if (handler != null) {
-      final result = handler();
-      if (result is W) return result;
-      // serialization handler wraps `serialization?.call(...)`, which returns
-      // null when the caller omitted it. Fall back to unknown().
-      return unknown();
-    }
-    return unknown();
+    return (handler ?? unknown)();
   }
 
   @override

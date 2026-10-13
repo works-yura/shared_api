@@ -36,15 +36,7 @@ class JsonObject {
     if (value == null) return defaultValue;
     if (value is T) return value;
 
-    // Type coercion via dynamic intermediary so it also works for nullable T
-    dynamic coerced;
-    if (defaultValue is double && value is num) {
-      coerced = value.toDouble();
-    } else if (defaultValue is int && value is num) {
-      coerced = value.toInt();
-    } else if (defaultValue is String) {
-      coerced = value.toString();
-    }
+    final coerced = _coerce<T>(value, toText: true);
     if (coerced is T) return coerced;
 
     return defaultValue;
@@ -59,16 +51,27 @@ class JsonObject {
 
     if (value is T) return value;
 
-    // Type coercion via dynamic intermediary
-    dynamic coerced;
-    if (T == double && value is num) {
-      coerced = value.toDouble();
-    } else if (T == int && value is num) {
-      coerced = value.toInt();
-    }
+    final coerced = _coerce<T>(value, toText: false);
     if (coerced is T) return coerced;
 
     throw JsonDeserializationException(key, value, T);
+  }
+
+  /// Converts [value] to [T] (nullable or not) where a lossless-enough
+  /// conversion exists: num -> double / int and, if [toText], any -> String.
+  /// Returns null when no conversion applies.
+  static Object? _coerce<T>(Object value, {required bool toText}) {
+    if (value is num) {
+      final asDouble = value.toDouble();
+      if (asDouble is T) return asDouble;
+      final asInt = value.toInt();
+      if (asInt is T) return asInt;
+    }
+    if (toText) {
+      final text = value.toString();
+      if (text is T) return text;
+    }
+    return null;
   }
 
   /// Maps a nested object to type [R] if it exists.

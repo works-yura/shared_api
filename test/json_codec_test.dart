@@ -35,10 +35,7 @@ void main() {
       expect(await c.decode('null'), isEmpty);
     });
 
-    test('decode malformed JSON string -> {}',
-        skip: 'BUG: lib/src/core/codec/json_codec.dart:22 — jsonDecode is not '
-            'guarded; malformed string throws FormatException instead of {}',
-        () async {
+    test('decode malformed JSON string -> {}', () async {
       expect(await c.decode('{not json'), isEmpty);
     });
 

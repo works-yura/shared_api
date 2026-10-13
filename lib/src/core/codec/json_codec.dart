@@ -19,8 +19,12 @@ class JsonCodec implements Codec {
     return await Isolate.run(() {
       if (data is Map) return Map<String, dynamic>.from(data);
       if (data is String) {
-        final decoded = jsonDecode(data);
-        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+        try {
+          final decoded = jsonDecode(data);
+          if (decoded is Map) return Map<String, dynamic>.from(decoded);
+        } on FormatException {
+          return <String, dynamic>{};
+        }
       }
       return {};
     });

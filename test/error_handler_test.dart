@@ -91,11 +91,9 @@ void main() {
 
     test('status and String message from body', () {
       final body = {'message': 'Not found', 'errorCode': 'NF'};
-      final e = handle(_response(body,
-          status: 404,
-          headers: {
-            'x-id': ['1']
-          }));
+      final e = handle(_response(body, status: 404, headers: {
+        'x-id': ['1']
+      }));
 
       expect(e.type, HttpExceptionType.response);
       expect(e.status, 404);
@@ -132,8 +130,8 @@ void main() {
     });
 
     test('non-map body uses DioException.message', () {
-      final e = handle(_response('plain text', status: 502),
-          message: 'Bad gateway');
+      final e =
+          handle(_response('plain text', status: 502), message: 'Bad gateway');
       expect(e.status, 502);
       expect(e.message, 'Bad gateway');
       expect(e.data, 'plain text');
@@ -185,8 +183,7 @@ void main() {
       expect(run(HttpException.cancel()), 'cancel');
       expect(run(HttpException.connection()), 'connection');
       expect(run(HttpException.response(headers: const {})), 'response');
-      expect(
-          run(HttpException.serialization(message: 'm', originalError: 'o')),
+      expect(run(HttpException.serialization(message: 'm', originalError: 'o')),
           'serialization:m:o');
       expect(run(HttpException.upgradeRequired()), 'upgrade');
       expect(run(HttpException.unknown()), 'unknown');
@@ -200,10 +197,7 @@ void main() {
     test('serialization fallback with nullable result type', () {
       final e = HttpException.serialization(message: 'bad json');
       expect(e.when<String?>(unknown: () => 'fallback'), 'fallback');
-    },
-        skip: 'BUG: lib/src/core/exceptions/exception.dart:101 — when<W> with '
-            'nullable W returns null instead of unknown() when the '
-            'serialization handler is omitted (null passes `is W`).');
+    });
 
     test('any omitted handler falls back to unknown()', () {
       for (final e in [
