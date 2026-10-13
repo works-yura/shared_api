@@ -5,7 +5,6 @@ import 'dart:isolate';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
-import 'package:talker_dio_logger/talker_dio_logger.dart';
 
 import 'package:shared_api/shared_api.dart';
 
