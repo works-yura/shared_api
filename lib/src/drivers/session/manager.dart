@@ -16,6 +16,11 @@ class SharedApiSession extends ApiSession {
 class ApiSession extends HttpSession<TokenState> {
   final _controller = StreamController<TokenState?>.broadcast();
   TokenState? _cachedState;
+
+  /// Whether storage has been consulted (or written). Lets "no session"
+  /// (null) be cached too, so a signed-out app doesn't hit storage and emit
+  /// on [status] for every [read].
+  bool _loaded = false;
   final _lock = Lock();
 
   final Future<void> Function(TokenState state) onSave;
@@ -34,7 +39,7 @@ class ApiSession extends HttpSession<TokenState> {
   @override
   Future<TokenState?> read() async {
     return _lock.synchronized(() async {
-      if (_cachedState != null) {
+      if (_loaded) {
         return _cachedState;
       }
 
@@ -43,7 +48,8 @@ class ApiSession extends HttpSession<TokenState> {
 
       // IMPORTANT: If _cachedState was updated while we were loading from storage,
       // we MUST NOT overwrite it with potentially stale data from onLoad().
-      if (_cachedState == null) {
+      if (!_loaded) {
+        _loaded = true;
         _cachedState = state;
         debugPrint('[ApiSession] Loaded state: ${state?.runtimeType}');
         _controller.add(_cachedState);
@@ -65,6 +71,7 @@ class ApiSession extends HttpSession<TokenState> {
         case AuthorizedState():
           // Persist first: never cache a state that failed to save.
           await onSave(state);
+          _loaded = true;
           _cachedState = state;
           _controller.add(state);
           break;
@@ -83,6 +90,7 @@ class ApiSession extends HttpSession<TokenState> {
   Future<void> _clear(UnauthorizedReason reason) async {
     debugPrint('[ApiSession] Clearing session ($reason)...');
     _cachedState = null;
+    _loaded = true;
     await onDelete();
     _controller.add(TokenState.unauthorized(reason: reason));
   }

@@ -102,7 +102,7 @@ void main() {
       await sub.cancel();
     });
 
-    test('onLoad returning null yields null; null is not cached', () async {
+    test('onLoad returning null yields null and is cached', () async {
       final storage = _Storage();
       final session = storage.build();
       final events = <TokenState?>[];
@@ -112,9 +112,9 @@ void main() {
       expect(await session.read(), isNull);
       await Future<void>.delayed(Duration.zero);
 
-      // Null results are re-fetched on every read (cache only holds non-null).
-      expect(storage.loads, 2);
-      expect(events, [null, null]);
+      // "No session" is cached: storage is read once, listeners notified once.
+      expect(storage.loads, 1);
+      expect(events, [null]);
       await sub.cancel();
     });
 
@@ -229,7 +229,7 @@ void main() {
       expect((events.single as UnauthorizedState).reason,
           UnauthorizedReason.sessionExpired);
       expect(await session.read(), isNull);
-      expect(storage.loads, 1, reason: 'cache cleared -> reload from storage');
+      expect(storage.loads, 0, reason: 'signed-out state is cached, no reload');
       await sub.cancel();
     });
   });
@@ -255,16 +255,16 @@ void main() {
       await sub.cancel();
     });
 
-    test('read after clear re-invokes onLoad', () async {
+    test('read after clear returns null without reloading', () async {
       final token = _auth();
       final storage = _Storage(token);
       final session = storage.build();
 
       await session.read();
       await session.clear();
-      await session.read();
 
-      expect(storage.loads, 2);
+      expect(await session.read(), isNull);
+      expect(storage.loads, 1);
     });
   });
 
