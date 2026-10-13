@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_api/shared_api.dart';
-import 'package:shared_api/src/core/session/memory.dart';
 
 // ---------------------------------------------------------------------------
 // Helpers / fakes

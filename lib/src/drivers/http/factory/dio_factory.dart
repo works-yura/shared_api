@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart';
 
 import 'package:shared_api/shared_api.dart';
 
-import '../config.dart';
 
 class DioFactory {
   final HttpConfig config;

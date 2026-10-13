@@ -3,9 +3,6 @@ import 'package:dio/dio.dart';
 import 'dart:io' show HttpHeaders, HttpStatus;
 import 'package:synchronized/synchronized.dart';
 import 'package:shared_api/shared_api.dart';
-import 'package:shared_api/src/drivers/http/http.dart';
-import 'package:shared_api/src/data/shared/types.dart';
-import '../../session/session.dart';
 
 class InvalidRefreshTokenException extends DioException {
   InvalidRefreshTokenException({required super.requestOptions});
