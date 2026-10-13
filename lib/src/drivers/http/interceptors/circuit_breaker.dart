@@ -62,6 +62,14 @@ class CircuitBreakerInterceptor extends Interceptor {
   void onError(DioException err, ErrorInterceptorHandler handler) {
     if (_isSystemFailure(err)) {
       _recordFailure();
+    } else if (_state == CircuitState.halfOpen) {
+      if (err.type == DioExceptionType.badResponse) {
+        // A 4xx means the server is reachable and healthy enough to answer.
+        _recordSuccess();
+      } else {
+        // Cancelled / unknown probe proved nothing: let the next request probe.
+        _isTestingHalfOpen = false;
+      }
     }
     handler.next(err);
   }
@@ -69,6 +77,8 @@ class CircuitBreakerInterceptor extends Interceptor {
   void _recordSuccess() {
     if (_state == CircuitState.halfOpen) {
       _successCount++;
+      // Probe finished: allow the next request to probe.
+      _isTestingHalfOpen = false;
       if (_successCount >= config.successThreshold) {
         _transitionToClosed();
       }

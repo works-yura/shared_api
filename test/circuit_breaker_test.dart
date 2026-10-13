@@ -126,8 +126,8 @@ void main() {
     });
 
     test('rejection message is the CircuitBreakerOpenException', () {
-      expect(CircuitBreakerOpenException().toString(),
-          contains('Circuit Open'));
+      expect(
+          CircuitBreakerOpenException().toString(), contains('Circuit Open'));
     });
 
     test('default config values', () {
@@ -165,8 +165,8 @@ void main() {
     ]) {
       test('${type.name} counts', () async {
         final t = _setup(failureThreshold: 2);
-        t.adapter.next = (o) =>
-            throw DioException(requestOptions: o, type: type);
+        t.adapter.next =
+            (o) => throw DioException(requestOptions: o, type: type);
         await _err(t.dio);
         await _err(t.dio);
         t.adapter.next = (_) => 200;
@@ -182,8 +182,8 @@ void main() {
     ]) {
       test('${type.name} does not count', () async {
         final t = _setup(failureThreshold: 2);
-        t.adapter.next = (o) =>
-            throw DioException(requestOptions: o, type: type);
+        t.adapter.next =
+            (o) => throw DioException(requestOptions: o, type: type);
         for (var i = 0; i < 4; i++) {
           await _err(t.dio);
         }
@@ -202,8 +202,7 @@ void main() {
   });
 
   group('half-open', () {
-    test('after reset timeout lets exactly one test request through',
-        () async {
+    test('after reset timeout lets exactly one test request through', () async {
       final t = _setup(failureThreshold: 2);
       await _failN(t.dio, t.adapter, 2);
       await _waitReset();
@@ -290,12 +289,6 @@ void main() {
         expect(await _err(t.dio), isNull); // 2nd should be allowed
         expect(await _err(t.dio), isNull);
       },
-      skip: 'BUG: lib/src/drivers/http/interceptors/circuit_breaker.dart:69 '
-          '— _recordSuccess in half-open never resets _isTestingHalfOpen, so '
-          'after the first test success every further request is rejected '
-          '(line 41) and the circuit can never reach successThreshold > 1; '
-          'with the default config (successThreshold: 3) it is stuck '
-          'half-open forever.',
     );
 
     test(
@@ -310,11 +303,6 @@ void main() {
         t.adapter.next = (_) => 200;
         expect(await _err(t.dio), isNull);
       },
-      skip: 'BUG: lib/src/drivers/http/interceptors/circuit_breaker.dart:62 '
-          '— onError ignores non-system failures, so if the single half-open '
-          'test request ends in 4xx/cancel/unknown, _isTestingHalfOpen stays '
-          'true and no transition happens: all later requests are rejected '
-          'forever.',
     );
   });
 }
