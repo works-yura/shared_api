@@ -11,5 +11,7 @@ abstract class HttpCredentials {
     this.path,
   });
 
-  bool get isSecure => scheme == 'https' || scheme == 'wss';
+  /// Secure unless plain `http` / `ws` is requested explicitly: a missing
+  /// [scheme] must never silently downgrade to cleartext.
+  bool get isSecure => scheme != 'http' && scheme != 'ws';
 }

@@ -299,16 +299,28 @@ void main() {
           'https://api.test:8443/v1/users/1');
     });
 
-    test('non-secure scheme and missing path; request path without slash',
+    test('missing scheme defaults to https; request path without slash',
         () async {
       final t = _setup((_, __) => _json([]));
 
       await t.client.execute(_ListUsers());
 
       final uri = t.adapter.requests.single.uri;
-      expect(uri.scheme, 'http');
+      expect(uri.scheme, 'https');
       expect(uri.host, 'api.test');
       expect(uri.path, '/users');
+    });
+
+    test('explicit http scheme is honoured', () async {
+      final t = _setup(
+        (_, __) => _json([]),
+        credentials: const ApiCredentials(
+            host: 'api.test', scheme: 'http', clientID: '', clientSecret: ''),
+      );
+
+      await t.client.execute(_ListUsers());
+
+      expect(t.adapter.requests.single.uri.scheme, 'http');
     });
 
     test('service discovery uses config.services base URL', () async {
