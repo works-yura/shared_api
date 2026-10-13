@@ -48,7 +48,7 @@ class OutboxEntry {
     return OutboxEntry(
       id: idRaw is String && idRaw.isNotEmpty ? idRaw : null,
       payload: isBinary && rawPayload is List
-          ? Uint8List.fromList(List<int>.from(rawPayload))
+          ? Uint8List.fromList(rawPayload.whereType<int>().toList())
           : rawPayload,
       createdAt: createdRaw is String ? DateTime.tryParse(createdRaw) : null,
       retryCount: retryRaw is int ? retryRaw : 0,

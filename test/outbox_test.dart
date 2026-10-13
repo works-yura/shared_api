@@ -79,18 +79,15 @@ void main() {
       test('bad createdAt -> ~now', () {
         for (final bad in ['garbage', 123, null]) {
           final e = OutboxEntry.fromJson({'id': 'a', 'createdAt': bad});
-          expect(DateTime.now().difference(e.createdAt).inSeconds,
-              lessThan(5));
+          expect(DateTime.now().difference(e.createdAt).inSeconds, lessThan(5));
         }
       });
 
       test('retryCount wrong type -> 0', () {
         expect(
-            OutboxEntry.fromJson({'id': 'a', 'retryCount': '3'}).retryCount,
-            0);
+            OutboxEntry.fromJson({'id': 'a', 'retryCount': '3'}).retryCount, 0);
         expect(
-            OutboxEntry.fromJson({'id': 'a', 'retryCount': 1.5}).retryCount,
-            0);
+            OutboxEntry.fromJson({'id': 'a', 'retryCount': 1.5}).retryCount, 0);
       });
 
       test('is_binary true with non-list payload keeps raw payload', () {
@@ -100,19 +97,21 @@ void main() {
       });
 
       test('is_binary non-bool is treated as false', () {
-        final e = OutboxEntry.fromJson(
-            {'id': 'a', 'is_binary': 'true', 'payload': [1, 2]});
+        final e = OutboxEntry.fromJson({
+          'id': 'a',
+          'is_binary': 'true',
+          'payload': [1, 2]
+        });
         expect(e.payload, isNot(isA<Uint8List>()));
       });
 
-      test('is_binary true with list of non-ints does not throw',
-          skip: 'BUG: lib/src/core/outbox/entry.dart:51 — '
-              'List<int>.from(rawPayload) throws TypeError when the stored '
-              'binary list contains non-int elements',
-          () {
+      test('is_binary true with list of non-ints does not throw', () {
         expect(
-            () => OutboxEntry.fromJson(
-                {'id': 'a', 'is_binary': true, 'payload': ['x', null]}),
+            () => OutboxEntry.fromJson({
+                  'id': 'a',
+                  'is_binary': true,
+                  'payload': ['x', null]
+                }),
             returnsNormally);
       });
 
@@ -196,8 +195,7 @@ void main() {
       });
     });
 
-    test('unreadable entry is skipped, others load, index survives',
-        () async {
+    test('unreadable entry is skipped, others load, index survives', () async {
       final storage = FakeOutboxStorage();
       final outbox = PersistentOutbox(storage);
       await outbox.save(OutboxEntry(id: 'a', payload: 1));
@@ -219,8 +217,7 @@ void main() {
       expect((await outbox.getAll()).map((e) => e.id), ['b']);
     });
 
-    test('row with corrupt fields loads tolerantly alongside others',
-        () async {
+    test('row with corrupt fields loads tolerantly alongside others', () async {
       final storage = FakeOutboxStorage();
       final outbox = PersistentOutbox(storage);
       await outbox.save(OutboxEntry(id: 'a', payload: 1));
@@ -251,13 +248,7 @@ void main() {
       expect(await PersistentOutbox(storage).getAll(), isEmpty);
     });
 
-    test('entry whose stored id is corrupt can still be deleted',
-        skip: 'BUG: lib/src/drivers/streaming/persistence/'
-            'persistent_outbox.dart:59 + lib/src/core/outbox/entry.dart:49 — '
-            'a stored row with missing id gets a freshly generated id on load, '
-            'so delete(entry.id) never removes the real index/storage key; '
-            'the row is redelivered forever',
-        () async {
+    test('entry whose stored id is corrupt can still be deleted', () async {
       final storage = FakeOutboxStorage();
       final outbox = PersistentOutbox(storage);
       storage.data['outbox_entry_k'] = {'payload': 1};

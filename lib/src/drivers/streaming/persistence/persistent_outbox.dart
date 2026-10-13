@@ -56,7 +56,9 @@ class PersistentOutbox implements Outbox {
       try {
         final json = await _storage.read(_entryKey(id));
         if (json != null) {
-          entries.add(OutboxEntry.fromJson(json));
+          // The index id is authoritative: it is the storage key, so delete()
+          // must target it even if the stored row's own id is corrupt.
+          entries.add(OutboxEntry.fromJson({...json, 'id': id}));
         }
       } catch (_) {
         // Ignore if missing or corrupted
