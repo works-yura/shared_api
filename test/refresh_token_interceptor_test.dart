@@ -522,13 +522,7 @@ void main() {
         throwsA(isA<InvalidRefreshTokenException>()),
       );
       expect(h.server.refreshCalls, 1);
-    },
-        skip: 'BUG: AuthRefreshRequest path /api/v1/auth/refresh '
-            '(auth_refresh.dart:9) does not match the hard-coded '
-            "'/authentication/refresh' checks (refresh_token.dart:163, "
-            'bearer_token.dart:18): the stale Bearer is attached to the '
-            'refresh call, and its 401 re-enters the non-reentrant _lock '
-            '(refresh_token.dart:56) -> whole client deadlocks.');
+    });
 
     test('logout via ApiSession keeps the sessionExpired reason on the stream',
         () async {

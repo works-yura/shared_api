@@ -11,6 +11,7 @@ import 'package:shared_api/src/core/session/session.dart';
 import 'package:shared_api/src/core/cache/cache.dart';
 import 'package:shared_api/src/core/utils/constants.dart';
 import 'package:shared_api/src/drivers/http/interceptors/cache.dart';
+import 'package:shared_api/src/data/shared/token.dart';
 import './cancel_token.dart';
 import './config.dart';
 import './error_handler.dart';
@@ -105,6 +106,8 @@ class ApiClient<S extends HttpState, C extends HttpCredentials>
           extra: {
             ...?options.extra,
             HttpConstants.cachePolicyKey: options.cachePolicy,
+            if (request is RefreshTokenRequestBase)
+              HttpConstants.refreshRequestKey: true,
           },
         ),
       );

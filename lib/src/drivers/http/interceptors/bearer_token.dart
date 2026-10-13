@@ -15,7 +15,7 @@ class BearerTokenInterceptor extends InterceptorsWrapper {
     // The refresh endpoint authenticates with the refresh token in its body,
     // not the access header. Attaching a stale/expired access token here can
     // make the server reject an otherwise-valid refresh.
-    if (options.path.contains('/authentication/refresh')) {
+    if (options.extra[HttpConstants.refreshRequestKey] == true) {
       return handler.next(options);
     }
 

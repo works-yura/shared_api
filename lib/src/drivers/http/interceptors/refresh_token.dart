@@ -160,7 +160,7 @@ class RefreshTokenInterceptor extends InterceptorsWrapper {
       options.headers.containsKey(HttpHeaders.authorizationHeader);
 
   bool _isRefreshRequest(RequestOptions options) =>
-      options.path.contains('/authentication/refresh');
+      options.extra[HttpConstants.refreshRequestKey] == true;
 
   Future<Response<dynamic>> retry(RequestOptions options) async {
     final state = await session.read();
