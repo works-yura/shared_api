@@ -235,6 +235,27 @@ void main() {
         expect(adapter.calls, 2);
       });
 
+      test('custom idempotency header makes a mutation retryable', () async {
+        final adapter = _FakeAdapter(failTimes: 1);
+        final dio = Dio(BaseOptions(baseUrl: 'http://test.local'))
+          ..httpClientAdapter = adapter;
+        dio.interceptors
+          ..add(IdempotencyInterceptor(headerName: 'X-Request-Id'))
+          ..add(RetryInterceptor(
+            dio: dio,
+            config: const RetryConfig(initialDelay: Duration(milliseconds: 1)),
+            retryIf: (e) =>
+                RetryInterceptor.isIdempotentRequest(e.requestOptions,
+                    idempotencyHeader: 'X-Request-Id') &&
+                RetryInterceptor.isTransientError(e),
+          ));
+
+        final res = await dio.post('/x');
+
+        expect(res.statusCode, 200);
+        expect(adapter.calls, 2);
+      });
+
       test('custom predicate can veto retries the default would allow',
           () async {
         final adapter = _FakeAdapter(failTimes: 1);

@@ -441,6 +441,80 @@ void main() {
 
       expect(t.adapter.requests.single.headers['x-country-code'], 'US');
     });
+
+    test('custom headerName', () async {
+      final t = _setup(CountryInterceptor(
+        getCountryCode: () async => 'UA',
+        headerName: 'X-Region',
+      ));
+
+      await t.dio.get<dynamic>('/x');
+
+      final h = t.adapter.requests.single.headers;
+      expect(h['X-Region'], 'UA');
+      expect(h.containsKey('x-country-code'), false);
+    });
+  });
+
+  group('VersionInterceptor header names', () {
+    test('custom versionHeader and buildHeader', () async {
+      final t = _setup(VersionInterceptor(
+        getAppVersion: () async => '1.2.3',
+        getBuildNumber: () async => '42',
+        versionHeader: 'X-Client-Version',
+        buildHeader: 'X-Client-Build',
+      ));
+
+      await t.dio.get<dynamic>('/x');
+
+      final h = t.adapter.requests.single.headers;
+      expect(h['X-Client-Version'], '1.2.3');
+      expect(h['X-Client-Build'], '42');
+      expect(h.containsKey('X-App-Version'), false);
+      expect(h.containsKey('X-App-Build'), false);
+    });
+  });
+
+  group('IdempotencyInterceptor', () {
+    test('defaults: key on POST/PATCH/PUT/DELETE, none on GET', () async {
+      final t = _setup(IdempotencyInterceptor());
+
+      for (final method in ['POST', 'PATCH', 'PUT', 'DELETE', 'GET']) {
+        await t.dio.request<dynamic>('/x', options: Options(method: method));
+      }
+
+      final keys = t.adapter.requests
+          .map((r) => r.headers['Idempotency-Key'] as String?)
+          .toList();
+      expect(keys.take(4), everyElement(isNotNull));
+      expect(keys.take(4).toSet(), hasLength(4));
+      expect(keys.last, isNull);
+      expect(IdempotencyInterceptor.defaultHeaderName, 'Idempotency-Key');
+    });
+
+    test('keeps a caller-supplied key', () async {
+      final t = _setup(IdempotencyInterceptor());
+
+      await t.dio.post<dynamic>('/x',
+          options: Options(headers: {'Idempotency-Key': 'like:1:2'}));
+
+      expect(t.adapter.requests.single.headers['Idempotency-Key'], 'like:1:2');
+    });
+
+    test('custom headerName and methods', () async {
+      final t = _setup(IdempotencyInterceptor(
+        headerName: 'X-Request-Id',
+        methods: const {'POST'},
+      ));
+
+      await t.dio.post<dynamic>('/x');
+      await t.dio.put<dynamic>('/x');
+
+      final post = t.adapter.requests[0].headers;
+      expect(post['X-Request-Id'], isNotNull);
+      expect(post.containsKey('Idempotency-Key'), false);
+      expect(t.adapter.requests[1].headers.containsKey('X-Request-Id'), false);
+    });
   });
 }
 

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:shared_api/src/core/utils/retry_config.dart';
+import 'package:shared_api/src/drivers/http/interceptors/idempotency.dart';
 
 /// An interceptor that automatically retries failed requests.
 ///
@@ -49,7 +50,7 @@ class RetryInterceptor extends Interceptor {
   /// `extra[idempotentKey]` takes precedence either way.
   static bool isIdempotentRequest(
     RequestOptions options, {
-    String idempotencyHeader = 'Idempotency-Key',
+    String idempotencyHeader = IdempotencyInterceptor.defaultHeaderName,
   }) {
     final override = options.extra[idempotentKey];
     if (override is bool) return override;

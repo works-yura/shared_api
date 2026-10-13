@@ -6,15 +6,34 @@ import 'package:uuid/uuid.dart';
 /// reconnect flush, etc.) without re-executing the side effects.
 ///
 /// Behaviour:
-///   - Only POST/PATCH/PUT/DELETE get a key.
-///   - If the request already has `Idempotency-Key` set (caller supplied a
+///   - Only [methods] (POST/PATCH/PUT/DELETE by default) get a key.
+///   - If the request already has [headerName] set (caller supplied a
 ///     deterministic key, e.g. `like:<userId>:<targetId>`), respect it.
 ///   - Otherwise generate a v4 UUID — Dio retains the same RequestOptions
 ///     across retries, so the key stays stable for the lifetime of the call.
+///
+/// [RetryInterceptor] treats requests carrying this header as safe to retry;
+/// when using a custom [headerName], pass the same name to
+/// [RetryInterceptor.isIdempotentRequest] in a custom `retryIf`.
 class IdempotencyInterceptor extends InterceptorsWrapper {
-  static const _headerName = 'Idempotency-Key';
-  static const _mutating = {'POST', 'PATCH', 'PUT', 'DELETE'};
+  /// Default header carrying the idempotency key.
+  static const defaultHeaderName = 'Idempotency-Key';
+
+  /// Default HTTP methods that get a key.
+  static const defaultMethods = {'POST', 'PATCH', 'PUT', 'DELETE'};
+
   static final _uuid = const Uuid();
+
+  /// Header carrying the idempotency key.
+  final String headerName;
+
+  /// Upper-case HTTP methods that get a key.
+  final Set<String> methods;
+
+  IdempotencyInterceptor({
+    this.headerName = defaultHeaderName,
+    this.methods = defaultMethods,
+  });
 
   @override
   void onRequest(
@@ -22,9 +41,8 @@ class IdempotencyInterceptor extends InterceptorsWrapper {
     RequestInterceptorHandler handler,
   ) {
     final method = options.method.toUpperCase();
-    if (_mutating.contains(method) &&
-        !options.headers.containsKey(_headerName)) {
-      options.headers[_headerName] = _uuid.v4();
+    if (methods.contains(method) && !options.headers.containsKey(headerName)) {
+      options.headers[headerName] = _uuid.v4();
     }
     handler.next(options);
   }
