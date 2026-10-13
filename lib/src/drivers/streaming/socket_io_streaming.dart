@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import '/src/core/core.dart';
 import '/src/drivers/http/interceptors/app_check.dart';
-import '/src/drivers/session/state.dart';
+import 'access_token.dart';
 
 /// Socket.IO implementation of [Streaming].
 ///
@@ -10,11 +10,54 @@ import '/src/drivers/session/state.dart';
 /// from `socket.active` — that flag lies during teardown. Each socket attempt
 /// has a `_generation` tag captured by its listeners so events from a
 /// torn-down socket are dropped instead of bleeding into the next attempt.
+///
+/// The defaults speak the gateway this package was built against: path `/ws`,
+/// websocket-only transport, `auth` → `authenticated` / `exception` handshake
+/// and a `{token, appCheck}` auth payload. Each is a constructor parameter so
+/// another Socket.IO backend can be targeted without forking the driver.
 class SocketIOStreaming<S extends HttpState, C extends HttpCredentials>
     implements Streaming {
   final C credentials;
   final HttpSession<S>? session;
+
+  /// Ack timeout source for [sendRequest] (its `maxDelay`) when [ackTimeout]
+  /// is not set. Reconnects use [reconnect].
   final RetryConfig retryConfig;
+
+  /// How long [sendRequest] waits for the server ack. Defaults to
+  /// `retryConfig.maxDelay`.
+  final Duration? ackTimeout;
+
+  /// Reconnect backoff: `initialDelay * 2^n` capped at `maxDelay`, giving up
+  /// (status `disconnected`) after `maxAttempts` consecutive failures.
+  final RetryConfig reconnect;
+
+  /// Socket.IO endpoint path.
+  final String path;
+
+  /// Engine.IO transports, in order of preference.
+  final List<String> transports;
+
+  /// Builds the handshake `auth` object from the access token and the App
+  /// Check token (null when unavailable). Defaults to [handshakeAuth].
+  final Map<String, dynamic> Function(String token, String? appCheck)
+      authPayload;
+
+  /// Event emitted after the transport connects to ask the server to
+  /// authenticate the handshake.
+  final String authEvent;
+
+  /// Server event confirming the identity; only then is the stream
+  /// `connected`.
+  final String authenticatedEvent;
+
+  /// Server event rejecting the identity while connecting. The rejected token
+  /// is not retried until the session holds a different one.
+  final String rejectedEvent;
+
+  /// Extracts the access token from the session state. Null or blank means
+  /// no socket is opened. Defaults to [sessionAccessToken].
+  final StreamingTokenResolver<S> accessToken;
 
   /// Firebase App Check token for the handshake (`auth.appCheck`), checked by
   /// the server once per connection — every reconnect fetches it again.
@@ -41,9 +84,11 @@ class SocketIOStreaming<S extends HttpState, C extends HttpCredentials>
   // Reconnect: single timer, exponential backoff, hard cap.
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
-  static const int _maxReconnectAttempts = 8;
-  static const Duration _baseReconnectDelay = Duration(seconds: 1);
-  static const Duration _maxReconnectDelay = Duration(seconds: 30);
+  static const defaultReconnect = RetryConfig(
+    maxAttempts: 8,
+    initialDelay: Duration(seconds: 1),
+    maxDelay: Duration(seconds: 30),
+  );
 
   // Watchdog — engine.io can hang the handshake without firing any event
   // (TCP RST swallowed, transport upgrade stuck). Force teardown if we don't
@@ -61,6 +106,15 @@ class SocketIOStreaming<S extends HttpState, C extends HttpCredentials>
     this.session,
     this.interceptors = const [],
     this.retryConfig = const RetryConfig(),
+    this.ackTimeout,
+    this.reconnect = defaultReconnect,
+    this.path = '/ws',
+    this.transports = const ['websocket'],
+    this.authPayload = handshakeAuth,
+    this.authEvent = 'auth',
+    this.authenticatedEvent = 'authenticated',
+    this.rejectedEvent = 'exception',
+    this.accessToken = sessionAccessToken,
     this.appCheckToken,
     io.Socket Function(String url, Map<String, dynamic> options)? createSocket,
   }) : _createSocket = createSocket ?? io.io;
@@ -143,12 +197,13 @@ class SocketIOStreaming<S extends HttpState, C extends HttpCredentials>
     // HTTP activity and app resume also request a socket connection. During
     // sign-up there is no access token, so opening one would cause the server
     // to reject `auth` and each brief connection to refresh protected badges.
-    if (state is! AuthorizedState || state.access.trim().isEmpty) {
+    final token = accessToken(state);
+    if (token == null || token.trim().isEmpty) {
       _lastConnectAttempt = null; // A subsequent login may connect immediately.
       _setStatus(StreamingStatus.disconnected);
       return;
     }
-    if (state.access == _rejectedAccessToken) {
+    if (token == _rejectedAccessToken) {
       _setStatus(StreamingStatus.disconnected);
       return;
     }
@@ -168,9 +223,9 @@ class SocketIOStreaming<S extends HttpState, C extends HttpCredentials>
     final socket = _createSocket(
       url,
       io.OptionBuilder()
-          .setTransports(['websocket'])
-          .setPath('/ws')
-          .setAuth(handshakeAuth(state.access, appCheck))
+          .setTransports(transports)
+          .setPath(path)
+          .setAuth(authPayload(token, appCheck))
           .disableAutoConnect()
           .disableReconnection()
           .enableForceNew()
@@ -178,7 +233,7 @@ class SocketIOStreaming<S extends HttpState, C extends HttpCredentials>
     );
 
     _socket = socket;
-    _bindListeners(socket, myGen, state.access);
+    _bindListeners(socket, myGen, token);
     _applyActiveListeners(socket);
 
     _connectWatchdog?.cancel();
@@ -196,13 +251,13 @@ class SocketIOStreaming<S extends HttpState, C extends HttpCredentials>
     s.onConnect((_) {
       if (_disposed || gen != _generation) return;
       // A transport connection is not an authenticated app session yet.
-      // The gateway answers `auth` with `authenticated` only after its JWT
-      // guard succeeds. Publishing connected earlier refreshed protected
+      // The gateway answers [authEvent] with [authenticatedEvent] only after
+      // its JWT guard succeeds. Publishing connected earlier refreshed protected
       // badges before the server had accepted the identity.
-      s.emit('auth');
+      s.emit(authEvent);
     });
 
-    s.on('authenticated', (_) {
+    s.on(authenticatedEvent, (_) {
       if (_disposed || gen != _generation) return;
       _rejectedAccessToken = null;
       _connectWatchdog?.cancel();
@@ -212,10 +267,10 @@ class SocketIOStreaming<S extends HttpState, C extends HttpCredentials>
       _flushPersistentRequests();
     });
 
-    s.on('exception', (_) {
+    s.on(rejectedEvent, (_) {
       if (_disposed || gen != _generation) return;
       if (_status != StreamingStatus.connecting) return;
-      // The server rejected `auth`. HTTP activity must not retry the same
+      // The server rejected [authEvent]. HTTP activity must not retry the same
       // token indefinitely; a new session token can start a fresh attempt.
       _rejectedAccessToken = accessToken;
       _teardown();
@@ -250,8 +305,8 @@ class SocketIOStreaming<S extends HttpState, C extends HttpCredentials>
     if (old != null) {
       try {
         old.off('connect');
-        old.off('authenticated');
-        old.off('exception');
+        old.off(authenticatedEvent);
+        old.off(rejectedEvent);
         old.off('disconnect');
         old.off('connect_error');
         old.dispose();
@@ -263,19 +318,18 @@ class SocketIOStreaming<S extends HttpState, C extends HttpCredentials>
     if (_disposed) return;
     _reconnectTimer?.cancel();
 
-    if (_reconnectAttempts >= _maxReconnectAttempts) {
+    if (_reconnectAttempts >= reconnect.maxAttempts) {
       _teardown();
       _setStatus(StreamingStatus.disconnected);
       _reconnectAttempts = 0;
       return;
     }
 
-    final delayMs = (_baseReconnectDelay.inMilliseconds *
-            (1 << _reconnectAttempts.clamp(0, 16)))
-        .clamp(0, _maxReconnectDelay.inMilliseconds);
+    final delay =
+        reconnect.getDelayForAttempt((_reconnectAttempts + 1).clamp(1, 17));
     _reconnectAttempts += 1;
 
-    _reconnectTimer = Timer(Duration(milliseconds: delayMs), () {
+    _reconnectTimer = Timer(delay, () {
       _reconnectTimer = null;
       if (_disposed || _status == StreamingStatus.connected) return;
       _teardown();
@@ -330,7 +384,7 @@ class SocketIOStreaming<S extends HttpState, C extends HttpCredentials>
         completer.completeError(e);
       }
     });
-    return completer.future.timeout(retryConfig.maxDelay);
+    return completer.future.timeout(ackTimeout ?? retryConfig.maxDelay);
   }
 
   @override
