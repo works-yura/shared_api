@@ -14,6 +14,7 @@ import 'package:shared_api/src/drivers/http/interceptors/cache.dart';
 import 'package:shared_api/src/data/shared/token.dart';
 import './cancel_token.dart';
 import './config.dart';
+import './factory/dio_factory.dart';
 import './error_handler.dart';
 import 'package:shared_api/src/core/http/credentials.dart';
 import 'package:shared_api/src/core/http/cancel.dart';
@@ -172,13 +173,13 @@ class ApiClient<S extends HttpState, C extends HttpCredentials>
       // do not interfere with presigned S3/MinIO URLs.
       final cleanDio = Dio();
 
-      // Mirror basic configuration from main dio if needed (e.g., SSL bypass for dev)
-      final source = dio.httpClientAdapter;
+      // Presigned URLs point at storage hosts, not the API: never inherit API
+      // certificate pinning. Only the explicit dev bypass is mirrored.
       final target = cleanDio.httpClientAdapter;
       if (!kIsWeb &&
-          source is IOHttpClientAdapter &&
+          config.allowBadCertificates &&
           target is IOHttpClientAdapter) {
-        target.createHttpClient = source.createHttpClient;
+        target.createHttpClient = DioFactory.insecureHttpClient;
       }
 
       await cleanDio.put<void>(

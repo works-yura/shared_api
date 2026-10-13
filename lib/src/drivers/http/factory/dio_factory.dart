@@ -21,6 +21,13 @@ class DioFactory {
     this.jsonDecodeCallback,
   });
 
+  /// HttpClient that accepts any certificate. Development only.
+  static io.HttpClient insecureHttpClient() {
+    final client = io.HttpClient();
+    client.badCertificateCallback = (cert, host, port) => true;
+    return client;
+  }
+
   Dio create() {
     final dio = Dio();
 
@@ -41,20 +48,23 @@ class DioFactory {
     if (!kIsWeb) {
       final adapter = dio.httpClientAdapter;
       if (adapter is IOHttpClientAdapter) {
-        if (config.certificates != null) {
+        final certificates = config.certificates;
+        if (config.allowBadCertificates) {
+          assert(() {
+            debugPrint('[DioFactory] WARNING: TLS validation disabled '
+                '(allowBadCertificates). Development only.');
+            return true;
+          }());
+          adapter.createHttpClient = insecureHttpClient;
+        } else if (certificates != null) {
+          // Certificate pinning: trust only the provided certificates.
           adapter.createHttpClient = () {
             final securityContext = io.SecurityContext(withTrustedRoots: false);
-            securityContext.setTrustedCertificatesBytes(config.certificates!);
+            securityContext.setTrustedCertificatesBytes(certificates);
             return io.HttpClient(context: securityContext);
           };
-        } else {
-          // Unsafe / Dev mode
-          adapter.createHttpClient = () {
-            final client = io.HttpClient();
-            client.badCertificateCallback = (cert, host, port) => true;
-            return client;
-          };
         }
+        // Otherwise: default HttpClient with the platform trust store.
       }
     }
 

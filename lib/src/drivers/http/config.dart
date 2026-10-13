@@ -5,7 +5,14 @@ class HttpConfig {
   final Duration sendTimeout;
   final Duration receiveTimeout;
   final Map<String, String>? headers;
+
+  /// Trusted certificates (PEM/DER bytes) for certificate pinning.
+  /// When null, the platform trust store is used.
   final List<int>? certificates;
+
+  /// Accepts ANY TLS certificate. Development only (self-signed local
+  /// servers): never enable in production, it allows man-in-the-middle.
+  final bool allowBadCertificates;
   final Map<String, String> services;
 
   /// Request body compression, e.g.
@@ -19,6 +26,7 @@ class HttpConfig {
     this.receiveTimeout = const Duration(seconds: 30),
     this.headers,
     this.certificates,
+    this.allowBadCertificates = false,
     this.services = const {},
     this.compression,
   });
