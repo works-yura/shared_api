@@ -1,40 +1,115 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:shared_api/src/core/utils/retry_config.dart';
 
 /// An interceptor that automatically retries failed requests.
 ///
 /// Logic:
-/// - Retries only idempotent requests (GET, PUT, DELETE, etc.) by default.
-/// - Uses exponential backoff.
+/// - Retries only when [retryIf] approves the error. The default,
+///   [defaultRetryIf], retries idempotent requests (GET, PUT, DELETE, HEAD,
+///   OPTIONS, or any request carrying an `Idempotency-Key`) on network errors
+///   and `503` / `504`.
+/// - Uses exponential backoff, or the server's `Retry-After` header when the
+///   error response carries one (capped by [RetryConfig.maxDelay]).
 /// - Respects [RetryConfig].
 class RetryInterceptor extends Interceptor {
+  /// `RequestOptions.extra` key holding the number of retries done so far.
+  static const attemptKey = 'retry_attempt';
+
+  /// `RequestOptions.extra` key that forces a request to be treated as
+  /// idempotent (`true`) or not (`false`), overriding the method/header check.
+  static const idempotentKey = 'is_idempotent';
+
   final Dio dio;
   final RetryConfig config;
+
+  /// Decides whether a failed request is retried. Defaults to
+  /// [defaultRetryIf]; compose it with [isIdempotentRequest] and
+  /// [isTransientError] to extend rather than replace the default.
+  final bool Function(DioException err) retryIf;
 
   RetryInterceptor({
     required this.dio,
     this.config = const RetryConfig(),
-  });
+    bool Function(DioException err)? retryIf,
+  }) : retryIf = retryIf ?? defaultRetryIf;
+
+  /// Default retry predicate: an idempotent request that failed transiently.
+  static bool defaultRetryIf(DioException err) =>
+      isIdempotentRequest(err.requestOptions) && isTransientError(err);
+
+  /// Whether [options] is safe to send twice.
+  ///
+  /// A request carrying an [idempotencyHeader] is safe to retry regardless of
+  /// HTTP method: the server deduplicates by that key, so a network-level
+  /// retry can't double-apply the side effect. The key stays stable across
+  /// retries because Dio reuses the same [RequestOptions].
+  ///
+  /// `extra[idempotentKey]` takes precedence either way.
+  static bool isIdempotentRequest(
+    RequestOptions options, {
+    String idempotencyHeader = 'Idempotency-Key',
+  }) {
+    final override = options.extra[idempotentKey];
+    if (override is bool) return override;
+
+    return options.headers.containsKey(idempotencyHeader) ||
+        options.method == 'GET' ||
+        options.method == 'PUT' ||
+        options.method == 'DELETE' ||
+        options.method == 'HEAD' ||
+        options.method == 'OPTIONS';
+  }
+
+  /// Whether [err] is a transient failure worth retrying: timeouts,
+  /// connection errors, socket / HTTP-level I/O errors and `503` / `504`.
+  static bool isTransientError(DioException err) {
+    if (err.type == DioExceptionType.connectionTimeout ||
+        err.type == DioExceptionType.sendTimeout ||
+        err.type == DioExceptionType.receiveTimeout ||
+        err.type == DioExceptionType.connectionError) {
+      return true;
+    }
+
+    if (err.type == DioExceptionType.unknown && err.error != null) {
+      final errStr = err.error.toString();
+      if (errStr.contains('SocketException') ||
+          errStr.contains('HttpException')) {
+        return true;
+      }
+    }
+
+    if (err.type == DioExceptionType.badResponse) {
+      final statusCode = err.response?.statusCode;
+      if (statusCode == 503 || statusCode == 504) {
+        return true;
+      }
+    }
+
+    return false;
+  }
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) async {
     final requestOptions = err.requestOptions;
 
     // Check if we should retry
-    if (!_shouldRetry(err, requestOptions)) {
+    if (!retryIf(err)) {
       return handler.next(err);
     }
 
-    var attempt = requestOptions.extra['retry_attempt'] as int? ?? 0;
+    var attempt = requestOptions.extra[attemptKey] as int? ?? 0;
 
     if (attempt >= config.maxAttempts) {
       return handler.next(err);
     }
 
     attempt++;
-    requestOptions.extra['retry_attempt'] = attempt;
+    requestOptions.extra[attemptKey] = attempt;
 
-    final delay = config.getDelayForAttempt(attempt);
+    final delay =
+        _retryAfter(err.response) ?? config.getDelayForAttempt(attempt);
 
     // Check if cancel token was cancelled during delay
     if (requestOptions.cancelToken?.isCancelled == true) {
@@ -64,53 +139,26 @@ class RetryInterceptor extends Interceptor {
     }
   }
 
-  bool _shouldRetry(DioException err, RequestOptions options) {
-    // A request carrying an Idempotency-Key is safe to retry regardless of
-    // HTTP method: the server deduplicates by that key, so a network-level
-    // retry can't double-apply the side effect. This is what lets mutating
-    // writes (POST/PATCH — e.g. saving the birthday) recover from a transient
-    // "connection closed" / timeout instead of failing outright. The key is
-    // added by IdempotencyInterceptor and stays stable across retries because
-    // Dio reuses the same RequestOptions.
-    final hasIdempotencyKey = options.headers.containsKey('Idempotency-Key');
+  /// Parses `Retry-After` (delta-seconds or HTTP-date) into a delay clamped to
+  /// `[0, config.maxDelay]`. Returns null when absent or malformed, so the
+  /// regular backoff applies.
+  Duration? _retryAfter(Response? response) {
+    final value = response?.headers.value('retry-after')?.trim();
+    if (value == null || value.isEmpty) return null;
 
-    bool isIdempotent = hasIdempotencyKey ||
-        options.method == 'GET' ||
-        options.method == 'PUT' ||
-        options.method == 'DELETE' ||
-        options.method == 'HEAD' ||
-        options.method == 'OPTIONS';
-
-    // Allow overriding idempotency in extras (takes precedence either way).
-    if (options.extra.containsKey('is_idempotent')) {
-      isIdempotent = options.extra['is_idempotent'] as bool;
-    }
-
-    if (!isIdempotent) return false;
-
-    // Retry on network errors
-    if (err.type == DioExceptionType.connectionTimeout ||
-        err.type == DioExceptionType.sendTimeout ||
-        err.type == DioExceptionType.receiveTimeout ||
-        err.type == DioExceptionType.connectionError) {
-      return true;
-    }
-
-    if (err.type == DioExceptionType.unknown && err.error != null) {
-      final errStr = err.error.toString();
-      if (errStr.contains('SocketException') || errStr.contains('HttpException')) {
-        return true;
+    Duration delay;
+    final seconds = int.tryParse(value);
+    if (seconds != null) {
+      delay = Duration(seconds: seconds);
+    } else {
+      try {
+        delay = HttpDate.parse(value).difference(DateTime.now());
+      } catch (_) {
+        return null;
       }
     }
 
-    // Retry on specific server errors (e.g., 503 Service Unavailable)
-    if (err.type == DioExceptionType.badResponse) {
-      final statusCode = err.response?.statusCode;
-      if (statusCode == 503 || statusCode == 504) {
-        return true;
-      }
-    }
-
-    return false;
+    if (delay.isNegative) return Duration.zero;
+    return delay > config.maxDelay ? config.maxDelay : delay;
   }
 }
