@@ -86,6 +86,7 @@ _Harness _setup(
   ApiCredentials credentials =
       const ApiCredentials(host: 'api.test', clientID: '', clientSecret: ''),
   HttpConfig config = const HttpConfig(),
+  ErrorEnvelopeParser errorEnvelope = const ErrorEnvelopeParser(),
 }) {
   final dio = Dio();
   final adapter = _Adapter(respond);
@@ -104,6 +105,7 @@ _Harness _setup(
     credentials: credentials,
     cache: MapHttpCache(),
     observers: [observer],
+    errorEnvelope: errorEnvelope,
   );
   return _Harness(dio, adapter, client, session, observer, saved);
 }
@@ -464,6 +466,23 @@ void main() {
               .having((e) => e.message, 'message', 'Nope'));
     });
 
+    test('custom errorEnvelope reads message and code', () async {
+      final t = _setup(
+        (_, __) => _json({
+          'error': {'detail': 'Nope', 'type': 'NOT_FOUND'}
+        }, status: 404),
+        errorEnvelope: const _NestedEnvelope(),
+      );
+
+      final e = _failure(await t.client.execute(_GetUser()));
+
+      expect(
+          e,
+          isA<HttpResponseException>()
+              .having((e) => e.message, 'message', 'Nope')
+              .having((e) => e.errorCode, 'errorCode', 'NOT_FOUND'));
+    });
+
     test('connection error → Try.failed(connection)', () async {
       final t = _setup((_, options) => throw DioException.connectionError(
           requestOptions: options, reason: 'down'));
@@ -580,4 +599,18 @@ void main() {
       }
     });
   });
+}
+
+/// Reads `{error: {detail, type}}` bodies.
+class _NestedEnvelope extends ErrorEnvelopeParser {
+  const _NestedEnvelope();
+
+  Map? _error(Object? data) =>
+      data is Map && data['error'] is Map ? data['error'] as Map : null;
+
+  @override
+  String? message(Object? data) => _error(data)?['detail'] as String?;
+
+  @override
+  String? code(Object? data) => _error(data)?['type'] as String?;
 }
