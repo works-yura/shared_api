@@ -125,6 +125,30 @@ class ZstdCompressor extends RequestCompressor {
 Bodies are left as is when already encoded (`Content-Encoding` set), not JSON
 (form-urlencoded, `FormData`), not smaller after compression, or on Web.
 
+## Adapting to your backend
+
+Defaults match the original backend; every contract is a constructor parameter.
+
+| Concern | Where | Parameter |
+|---|---|---|
+| TLS | `HttpConfig` | `certificates` (pinning), `allowBadCertificates` (dev only, default `false`) |
+| Scheme | `ApiCredentials` | `scheme` (default `https`/`wss`) |
+| Error body | `ApiClient` | `errorEnvelope: ErrorEnvelopeParser` (message, code, field errors, code → failure) |
+| 401 / session expired | `RefreshTokenInterceptor` | `isUnauthorized`, `isSessionExpired`, `isRefreshRejected`, `authHeaderName`, `authHeaderValue`, `isSecured` |
+| Refresh rejected | `ApiCoordinator` | `isRefreshRejected` (keep in sync with the interceptor) |
+| Auth header | `BearerTokenInterceptor` | `headerName`, `headerValue` |
+| Cache owner | `ApiCoordinator` | `userIdResolver` (required for non-JWT tokens to keep cache across refresh) |
+| Cache key | `ApiClient` | `cacheInterceptor: (c) => CacheInterceptor(cache: c, varyHeaders: [...])` |
+| Retry | `RetryInterceptor` | `retryIf` (compose with `RetryInterceptor.defaultRetryIf`) |
+| Circuit breaker | `CircuitBreakerInterceptor` | `isFailure`, `keyOf` (e.g. per host) |
+| Paywall | `SubscriptionInterceptor` | `matches` |
+| App Check | `AppCheckInterceptor` | `headerName`, `isOneShot` |
+| Headers | `VersionInterceptor`, `CountryInterceptor`, `IdempotencyInterceptor` | header names, idempotent methods |
+| Compression | `HttpConfig` | `compression: RequestCompression(...)` |
+| Socket.IO | `SocketIOStreaming` | `path`, `transports`, `authPayload`, event names, `reconnect`, `accessToken` |
+| WebSocket wire format | `StreamingProtocol` | field / event names, ping / pong; `tokenQueryParameter: null` + `authMessage` keeps the token out of URLs |
+| Validation messages | `ValidationEngine.validate` | `messages` |
+
 ## Tree
 
 ```bash
