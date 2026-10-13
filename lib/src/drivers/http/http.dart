@@ -9,6 +9,7 @@ import 'package:shared_api/src/core/utils/observer.dart';
 import 'package:shared_api/src/core/exceptions/exception.dart';
 import 'package:shared_api/src/core/session/session.dart';
 import 'package:shared_api/src/core/cache/cache.dart';
+import 'package:shared_api/src/core/utils/constants.dart';
 import './cancel_token.dart';
 import './config.dart';
 import './error_handler.dart';
@@ -85,7 +86,10 @@ class ApiClient<S extends HttpState, C extends HttpCredentials>
         options: Options(
           method: options.method.value,
           headers: options.headers,
-          extra: options.extra,
+          extra: {
+            ...?options.extra,
+            HttpConstants.cachePolicyKey: options.cachePolicy,
+          },
         ),
       );
 

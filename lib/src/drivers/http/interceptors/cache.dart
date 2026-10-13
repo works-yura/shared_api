@@ -25,9 +25,7 @@ class CacheInterceptor extends Interceptor {
     // Only cache GET requests unless specified otherwise
     if (options.method != 'GET') return handler.next(options);
 
-    final policy =
-        options.extra[HttpConstants.cachePolicyKey] as HttpCachePolicy? ??
-            HttpCachePolicy.useCache;
+    final policy = _cachePolicy(options.extra[HttpConstants.cachePolicyKey]);
 
     // Skip cache if policy is noCache or refresh
     if (policy == HttpCachePolicy.noCache ||
@@ -76,9 +74,7 @@ class CacheInterceptor extends Interceptor {
   @override
   void onResponse(Response response, ResponseInterceptorHandler handler) async {
     final options = response.requestOptions;
-    final policy =
-        options.extra[HttpConstants.cachePolicyKey] as HttpCachePolicy? ??
-            HttpCachePolicy.useCache;
+    final policy = _cachePolicy(options.extra[HttpConstants.cachePolicyKey]);
 
     if (options.method == 'GET' && policy != HttpCachePolicy.noCache) {
       final cacheKey = _getCacheKey(options);
@@ -170,10 +166,16 @@ class CacheInterceptor extends Interceptor {
       data: entry.data,
       statusCode: 200,
       statusMessage: 'OK (From Cache)',
-      headers: Headers.fromMap(entry.headers
-        ..addAll({
-          'x-from-cache': ['true']
-        })),
+      // Build a new map: never mutate the cached entry's headers in place.
+      headers: Headers.fromMap({
+        ...entry.headers,
+        'x-from-cache': ['true'],
+      }),
     );
+  }
+
+  // noCache when absent: caching is opt-in per request.
+  static HttpCachePolicy _cachePolicy(dynamic raw) {
+    return raw is HttpCachePolicy ? raw : HttpCachePolicy.noCache;
   }
 }

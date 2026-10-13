@@ -35,7 +35,7 @@ class HttpOptions {
     this.queries,
     this.headers,
     this.data,
-    this.cachePolicy = HttpCachePolicy.useCache,
+    this.cachePolicy = HttpCachePolicy.noCache,
     this.cancelToken,
     this.extra,
     this.onReceive,
