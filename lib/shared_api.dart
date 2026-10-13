@@ -30,4 +30,3 @@ export 'package:shared_api/src/data/requests/requests.dart';
 export 'package:shared_api/src/data/responses/responses.dart';
 // Validation
 export 'package:shared_api/src/drivers/validation/validation_engine.dart';
-export 'package:shared_api/src/drivers/validation/generated_rules.dart';

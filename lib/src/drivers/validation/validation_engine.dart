@@ -1,57 +1,58 @@
 /// Validation engine that interprets localized JSON Schema rules from the backend.
+///
+/// Supported keywords: `minLength`, `maxLength`, `pattern`. Per-rule messages
+/// come from the schema's `errorMessages` / `description`; otherwise from
+/// [messages] (keys: `fieldRequired`, `tooShort`, `tooLong`, `invalidFormat`),
+/// falling back to English.
 class ValidationEngine {
-  /// Localized error messages for fallback
-  static const _fallbacks = {
-    'en': {
-      'fieldRequired': 'Field is required',
-      'invalidFormat': 'Invalid format',
-    },
-    'uk': {
-      'fieldRequired': 'Поле обов’язкове',
-      'invalidFormat': 'Невірний формат',
-    }
+  /// Default English fallback messages.
+  static const defaultMessages = {
+    'fieldRequired': 'Field is required',
+    'tooShort': 'Too short',
+    'tooLong': 'Too long',
+    'invalidFormat': 'Invalid format',
   };
 
-  /// Validates a [value] against a [schema] Map with localization support.
-  /// [languageCode] is used to resolve fallback messages.
-  static String? validate(String? value, Map<String, dynamic> schema,
-      {String languageCode = 'en'}) {
-    final t = _fallbacks[languageCode] ?? _fallbacks['en']!;
-    final errorMessages = schema['errorMessages'] as Map<String, dynamic>?;
+  /// Validates a [value] against a [schema] Map.
+  /// [messages] overrides fallback messages (e.g. localized strings).
+  static String? validate(
+    String? value,
+    Map<String, dynamic> schema, {
+    Map<String, String>? messages,
+  }) {
+    String fallback(String key) =>
+        messages?[key] ?? defaultMessages[key] ?? '';
+
+    final rawMessages = schema['errorMessages'];
+    final errorMessages = rawMessages is Map ? rawMessages : const {};
+    String? schemaMessage(String key) {
+      final custom = errorMessages[key];
+      if (custom is String) return custom;
+      final description = schema['description'];
+      return description is String ? description : null;
+    }
 
     if (value == null || value.isEmpty) {
-      return errorMessages?['required'] ?? t['fieldRequired'];
+      final required = errorMessages['required'];
+      return required is String ? required : fallback('fieldRequired');
     }
 
     // 1. Min Length
-    if (schema.containsKey('minLength')) {
-      final min = schema['minLength'] as int;
-      if (value.length < min) {
-        return errorMessages?['minLength'] ??
-            schema['description'] ??
-            'Too short';
-      }
+    final min = schema['minLength'];
+    if (min is int && value.length < min) {
+      return schemaMessage('minLength') ?? fallback('tooShort');
     }
 
     // 2. Max Length
-    if (schema.containsKey('maxLength')) {
-      final max = schema['maxLength'] as int;
-      if (value.length > max) {
-        return errorMessages?['maxLength'] ??
-            schema['description'] ??
-            'Too long';
-      }
+    final max = schema['maxLength'];
+    if (max is int && value.length > max) {
+      return schemaMessage('maxLength') ?? fallback('tooLong');
     }
 
     // 3. Pattern (Regex)
-    if (schema.containsKey('pattern')) {
-      final pattern = schema['pattern'] as String;
-      final regex = RegExp(pattern);
-      if (!regex.hasMatch(value)) {
-        return errorMessages?['pattern'] ??
-            schema['description'] ??
-            t['invalidFormat'];
-      }
+    final pattern = schema['pattern'];
+    if (pattern is String && !RegExp(pattern).hasMatch(value)) {
+      return schemaMessage('pattern') ?? fallback('invalidFormat');
     }
 
     return null;
